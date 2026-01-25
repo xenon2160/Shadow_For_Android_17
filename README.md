@@ -47,7 +47,7 @@
 *   (可选) 建议配合 **Shamiko** 和 **Hide My Applist** 使用，以隐藏 Root 环境。
 
 ### 2. 安装与激活
-1.  下载并安装 `GlobalTraveling.apk`。
+1.  下载并安装 `Shadow.apk`。
 2.  打开 App，授予 **Root 权限** 和 **存储权限**。
 3.  打开 **LSPosed 管理器**，找到“环球旅行”模块。
 4.  **勾选作用域**：
