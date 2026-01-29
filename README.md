@@ -4,7 +4,7 @@
 ![LSPosed](https://img.shields.io/badge/LSPosed-Module-blue.svg)
 ![License](https://img.shields.io/badge/License-GPL%20v3.0-orange.svg)
 
-
+推荐使用 JS 版，如果不想注册高德账号，继续使用 1.0 版本。
 ### 📥 [点击下载最新版 APK](https://github.com/Qeccentric/GlobalTraveling/releases/latest)
 ### 📥 [点击下载JS版 支持填入KEY 密码:4onp](https://wwaon.lanzn.com/iqUY13h9prwj)
 **Shadow** 是一款基于 **LSPosed** 框架的 Android 系统级虚拟定位与环境伪装模块。
