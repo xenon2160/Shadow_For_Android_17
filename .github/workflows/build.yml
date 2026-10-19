@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ master, main, develop ]
   workflow_dispatch: # 允许在 GitHub 页面手动触发
 
 jobs:
