@@ -45,10 +45,12 @@ dependencies {
     implementation 'androidx.cardview:cardview:1.0.0'
 
     // 高德地图 & 搜索
-    // 10.0.600：官方适配 Android 15/16+ 与 16KB 内存页设备（澎湃OS 4 等新机型必需），
+    // 3dmap 10.0.600：官方适配 Android 15/16+ 与 16KB 内存页设备（澎湃OS 4 等新机型必需），
     // 旧版 9.8.2 在这些设备上会因 so 加载失败而崩溃。
+    // search 必须用 9.7.0：9.7.1 起新增了 com.amap.apis.utils.core.api 类，
+    // 与 3dmap 10.0.600 内的同名类冲突（Duplicate class 编译失败），9.7.0 不含该类且 API 完全兼容。
     implementation 'com.amap.api:3dmap:10.0.600'
-    implementation 'com.amap.api:search:9.7.1'
+    implementation 'com.amap.api:search:9.7.0'
 
     // LSPosed
     compileOnly 'de.robv.android.xposed:api:82'

@@ -51,7 +51,7 @@
 | **AGP 9.0 + Gradle 9.1** | 升级 Android Gradle Plugin 至 9.0.0（`gradle/libs.versions.toml`），Wrapper 升级至 Gradle 9.1.0 |
 | **compileSdk 36** | 编译平台升级至 Android 16+（`targetSdk` 保持 34，避免 edge-to-edge 等行为变化影响 UI） |
 | **Manifest 适配** | 移除 `<manifest>` 的 `package` 属性（AGP 8+ 已不支持），改由 `build.gradle` 的 `namespace` 提供 |
-| **高德 SDK 升级** | `3dmap` 9.8.2 → **10.0.600**（官方适配 Android 15/16+ 与 **16KB 内存页**设备，澎湃OS 4 等新机型不升级会在加载 so 时崩溃），`search` 升级至 9.7.1 |
+| **高德 SDK 升级** | `3dmap` 9.8.2 → **10.0.600**（官方适配 Android 15/16+ 与 **16KB 内存页**设备，澎湃OS 4 等新机型不升级会在加载 so 时崩溃）；`search` 固定 9.7.0（9.7.1 起与 3dmap 10.0.600 存在重复类冲突，导致编译失败） |
 | **代码清理** | `MainActivity` 移除重复的 `setContentView` 调用 |
 
 #### 三、新增 GitHub Actions 云端编译（`.github/workflows/build.yml`）
