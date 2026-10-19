@@ -197,7 +197,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
 
         // 按钮事件
         findViewById(R.id.btn_start).setOnClickListener(v -> {
-            if (selectLat == 0) return;
+            if (selectLat == 0) {
+                Toast.makeText(this, "请先在地图上长按或搜索选点", Toast.LENGTH_SHORT).show();
+                return;
+            }
             writeToSystemTmp(selectLat + "," + selectLng + ",1," + fixedMac + "," + fixedSSID, true);
             saveHistory(currentName, selectLat, selectLng);
         });
