@@ -21,10 +21,50 @@
 
 ## ✅ 已验证机型 (Verified Devices)
 
-本项目已在以下设备/系统版本上测试通过，理论上支持 Android 10 - 16：
+本项目已在以下设备/系统版本上测试通过，理论上支持 Android 10 - 17（含澎湃OS 4）：
 | 设备型号 | Android 版本 | 系统 UI | 测试结果 |
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
+
+### 🆕 1.1 版本：Android 17（澎湃OS 4）适配
+
+旧版（1.0）在 Android 17 上无法工作，主要是因为 Hook 初始化过程中任何一个被废弃的
+系统 API（如 `TelephonyManager.getNetworkType`、`CellLocation` 等）被新系统移除后，
+异常会中断整个模块的 Hook 安装，导致**所有** Hook 全部失效。1.1 版本的完整修改如下：
+
+#### 一、Hook 层修改（`HookMain.java`）—— Android 17 失效问题的根源修复
+
+| 修改点 | 说明 |
+| --- | --- |
+| **Hook 全面隔离** | 新增 `safe()` 统一包装，每个 Hook 独立 try/catch，单个 API 被新系统移除只跳过该 Hook 并写日志，不再中断整个模块初始化 |
+| **定位修改加固** | `applyLocationFix()` 优先使用公开 setter（`setLatitude`/`setLongitude`）修改坐标，私有字段反射（`mLatitude` 等）仅作回退，避免新系统字段布局变化导致反射失败 |
+| **Wi-Fi 伪造修复** | `WifiInfo.mBSSID` 自 Android 12 起为 `MacAddress` 类型而非 `String`，新增 `setWifiInfoField()` 按字段实际类型赋值，修复新系统上 Wi-Fi 指纹伪造失效 |
+| **新增 Mock 检测屏蔽** | 补充 `Location.isMock()`（Android 12+ 新的 Mock 检测途径）的 Hook，与旧的 `isFromMockProvider` 双保险 |
+| **监听器 Hook 修复** | `requestLocationUpdates` 改用 `instanceof LocationListener` 判断（旧版按类名 `contains` 判断会漏掉 Lambda/方法引用），并新增 `Consumer` 路径支持（Android 12+ API）；使用 `WeakHashMap` 保证每个监听器只挂载一次，防止重复 Hook 无限膨胀 |
+| **LastKnownLocation 补全** | 当系统返回 `null` 时用配置坐标构造 `Location` 返回，解决部分 App 一直显示"定位中"转圈的问题 |
+| **配置读取缓存** | 配置文件 `/data/local/tmp/irest_loc.conf` 增加 500ms 读取缓存，降低高频文件 IO |
+
+#### 二、构建链升级（适配新版 Android Studio / AGP）
+
+| 修改点 | 说明 |
+| --- | --- |
+| **AGP 9.0 + Gradle 9.1** | 升级 Android Gradle Plugin 至 9.0.0（`gradle/libs.versions.toml`），Wrapper 升级至 Gradle 9.1.0 |
+| **compileSdk 36** | 编译平台升级至 Android 16+（`targetSdk` 保持 34，避免 edge-to-edge 等行为变化影响 UI） |
+| **Manifest 适配** | 移除 `<manifest>` 的 `package` 属性（AGP 8+ 已不支持），改由 `build.gradle` 的 `namespace` 提供 |
+| **高德 SDK 升级** | `3dmap` 9.8.2 → **10.0.600**（官方适配 Android 15/16+ 与 **16KB 内存页**设备，澎湃OS 4 等新机型不升级会在加载 so 时崩溃），`search` 升级至 9.7.1 |
+| **代码清理** | `MainActivity` 移除重复的 `setContentView` 调用 |
+
+#### 三、新增 GitHub Actions 云端编译（`.github/workflows/build.yml`）
+
+本机没有 Android 开发环境也可以出 APK：
+
+1.  将本仓库 **Push 到你自己的 GitHub**；
+2.  打开仓库的 **Actions** 页面 → 选择 **Build APK** → **Run workflow**；
+3.  编译完成后在 **Artifacts** 中下载 `Shadow-debug-apk` 即可。
+
+> 若升级后仍无法模拟，请在 LSPosed 管理器中勾选目标应用的作用域（必要时加上
+> “系统框架”），**强制停止**目标应用后重新打开（或重启手机）；模块日志可在
+> LSPosed 日志中查看 `[Shadow]` 前缀输出，被跳过的 Hook 会显示 `Hook skipped`。
 
 ---
 

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-package="com.kankan.globaltraveling">
+<!-- 包名由 build.gradle 中的 namespace 提供（AGP 8+ 要求，Manifest 中不可再写 package 属性） -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

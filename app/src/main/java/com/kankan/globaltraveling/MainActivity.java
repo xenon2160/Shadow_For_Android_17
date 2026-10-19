@@ -97,7 +97,6 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
 
         setContentView(R.layout.activity_main);
 
-        setContentView(R.layout.activity_main);
         // 3. 检查免责声明
         if (checkDisclaimer()) {
             initApp();
