@@ -4,14 +4,18 @@ plugins {
 
 android {
     namespace 'com.kankan.globaltraveling'
-    compileSdk 34 // 建议用 33 或 34，比较稳定
+    // 编译到最新平台（Android 16+）。若提示缺少 SDK，让 Android Studio 自动下载即可。
+    // 运行时兼容性由 HookMain 内的反射 + 安全 Hook 保证，不依赖 compileSdk。
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.kankan.globaltraveling"
         minSdk 26
+        // 保持 targetSdk 34：Android 17 仍完全兼容，且避免 targetSdk 35+ 的
+        // 强制沉浸式(edge-to-edge)等行为变化影响现有 UI。
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1"
 
         // 只打包 arm64，减小体积
         ndk {
@@ -41,8 +45,10 @@ dependencies {
     implementation 'androidx.cardview:cardview:1.0.0'
 
     // 高德地图 & 搜索
-    implementation 'com.amap.api:3dmap:9.8.2'
-    implementation 'com.amap.api:search:9.7.0'
+    // 10.0.600：官方适配 Android 15/16+ 与 16KB 内存页设备（澎湃OS 4 等新机型必需），
+    // 旧版 9.8.2 在这些设备上会因 so 加载失败而崩溃。
+    implementation 'com.amap.api:3dmap:10.0.600'
+    implementation 'com.amap.api:search:9.7.1'
 
     // LSPosed
     compileOnly 'de.robv.android.xposed:api:82'
