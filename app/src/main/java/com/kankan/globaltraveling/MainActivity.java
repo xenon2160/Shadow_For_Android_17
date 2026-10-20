@@ -353,7 +353,6 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
             if (neg != null) neg.setTextColor(Color.parseColor("#888888"));
         } catch (Throwable ignored) {}
     }
-    }
 
     /** 复制文本到剪贴板 */
     private void copyText(String label, String text) {
