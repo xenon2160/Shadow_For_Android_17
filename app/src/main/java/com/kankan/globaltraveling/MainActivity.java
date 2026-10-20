@@ -267,9 +267,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
             return true;
         });
 
-        // 未填 Key 时主动提示（地图瓦片与高德搜索需要 Key；
-        // 搜索同时内置了免 Key 备用通道，不填也能搜，但地图无法加载）
-        if (amapKey.isEmpty()) {
+        // 两种 Key 都未填写时才提示（只填了 Web Key 不再反复弹窗）
+        SharedPreferences appPrefs = getSharedPreferences(PREF_APP, Context.MODE_PRIVATE);
+        if (amapKey.isEmpty() && appPrefs.getString(KEY_AMAP_WEB, "").isEmpty()) {
             tvStatus.post(this::showApiKeyDialog);
         }
     }
@@ -306,19 +306,26 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         inputWeb.setText(prefs.getString(KEY_AMAP_WEB, ""));
         btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
-        new MaterialAlertDialogBuilder(this)
+        // Material 3 风格弹窗（大圆角、M3 按钮样式）
+        new MaterialAlertDialogBuilder(this,
+                com.google.android.material.R.style.ThemeOverlay_Material3_MaterialAlertDialog)
                 .setTitle("设置高德地图 API Key")
                 .setView(view)
                 .setCancelable(true)
                 .setPositiveButton("保存", (dialog, which) -> {
                     String k = input.getText().toString().trim();
-                    getSharedPreferences(PREF_APP, Context.MODE_PRIVATE)
-                            .edit()
+                    SharedPreferences sp = getSharedPreferences(PREF_APP, Context.MODE_PRIVATE);
+                    String oldK = sp.getString(KEY_AMAP, "");
+                    sp.edit()
                             .putString(KEY_AMAP, k)
                             .putString(KEY_AMAP_WEB, inputWeb.getText().toString().trim())
                             .apply();
-                    Toast.makeText(this, "已保存，正在重新加载地图…", Toast.LENGTH_SHORT).show();
-                    recreate(); // 重新走初始化流程，让新 Key 生效
+                    if (!k.equals(oldK)) {
+                        Toast.makeText(this, "已保存，正在重新加载地图…", Toast.LENGTH_SHORT).show();
+                        recreate(); // Android Key 变更需重建地图；仅改 Web Key 无需重建
+                    } else {
+                        Toast.makeText(this, "已保存", Toast.LENGTH_SHORT).show();
+                    }
                 })
                 .setNegativeButton("暂不填写", null)
                 .show();

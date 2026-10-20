@@ -96,7 +96,7 @@
 > [蓝奏云（密码 4onp）](https://wwaon.lanzn.com/iqUY13h9prwj)
 >
 > 本 Fork 的安装包：**Releases 页面**（永久下载，推荐）或 **Actions → Artifacts**（90 天有效）。
-> 发布新版本只需推送 tag：`git tag v1.1.2 && git push origin v1.1.2`，CI 会自动构建并创建 Release。
+> **发版流程**：在 `develop` 分支开发 → Actions 构建验证通过 → 合并到 `main`（`git push fork develop:main`）→ 打 tag 发布（`git tag v2.0.1 && git push fork v2.0.1`），CI 自动创建 Release。
 
 ---
 
@@ -134,6 +134,14 @@
 | **Xiaomi 13** | **Android 17** | 澎湃OS 4 | ✅ 完美运行（KernelSU + ReZygisk + Vector，定位模拟/搜索/微信均已验证） |
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
+
+### 🆕 2.0.1 版本：Key 弹窗体验修复
+
+*   **修复只填 Web Key 后弹窗反复重弹**的问题（原判断条件只看 Android Key 是否为空）。
+*   仅修改 Web Key 时不再重建地图界面，保存即生效。
+*   弹窗升级 **Material 3 风格**（大圆角、M3 按钮）。
+
+---
 
 ### 🆕 2.0 版本：搜索全面适配国内网络（版本号说明：原作者已发布 1.2，本 Fork 从 1.0 重构，故跳至 2.0）
 
