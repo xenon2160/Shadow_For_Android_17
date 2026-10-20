@@ -57,8 +57,8 @@
 
 | 操作 | 组件 | 说明 |
 | --- | --- | --- |
-| ❌ **必须卸载** | **ZygiskNext**（KernelSU 中模块名 `zygisksu`） | 已停止维护，Android 17 上注入必崩 |
-| ❌ **必须卸载** | 旧版独立 **LSPosed Manager** App（`org.lsposed.manager`） | 无法连接新版服务，点通知黑屏闪退 |
+| ❌ **需要卸载** | **ZygiskNext**（KernelSU 中模块名 `zygisksu`） | 已停止维护，Android 17 上注入无效 |
+| ❌ **需要卸载** | 旧版独立 **LSPosed Manager** App（`org.lsposed.manager`） | 无法连接新版服务，点通知黑屏闪退 |
 | ✅ **必须安装** | **[ReZygisk](https://github.com/PerformanC/ReZygisk)** v1.0.0+ | ZygiskNext 的社区续作，明确支持 Android 17 |
 | ✅ **必须安装** | **[Vector](https://github.com/JingMatrix/Vector)** v2.2+ | LSPosed 的现维护版本（LSPosed 已更名 Vector） |
 | ➕ 按需保留 | KernelSU / Magisk、Scene、Shamiko、Hide My Applist… | 其余模块可继续搭配 |
@@ -76,15 +76,16 @@
 ## ✅ 已验证机型 (Verified Devices)
 
 本项目已在以下设备/系统版本上测试通过，理论上支持 Android 10 - 17（含澎湃OS 4）：
+
 | 设备型号 | Android 版本 | 系统 UI | 测试结果 |
+| --- | --- | --- | --- |
 | **Xiaomi 13** | **Android 17** | 澎湃OS 4 | ✅ 完美运行（KernelSU + ReZygisk + Vector，定位模拟/搜索/微信均已验证） |
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
 
 ### 🆕 1.1.2 版本：应用包名变更
 
-*   应用 ID（applicationId）由 `com.kankan.globaltraveling` 改为 **`com.xenon.shadow2`**，
-    降低被目标 App 按包名识别为 Xposed 模块的概率。
+*   应用 ID（applicationId）由 `com.kankan.globaltraveling` 改为 **`com.xenon.shadow2`**。
 *   代码内部已改为通过 `BuildConfig.APPLICATION_ID` 动态读取自身包名，
     **今后再改包名只需改 `build.gradle` 一行**，无需动 Java 代码。
 *   ⚠️ 从旧包名升级等同于安装新应用：需重新配置**高德 Key 包名**、
