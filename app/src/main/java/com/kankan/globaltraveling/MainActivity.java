@@ -543,7 +543,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     private Tip makeTip(String name, double lat, double lng) {
         Tip tip = new Tip();
         tip.setName(name);
-        tip.setPoint(new LatLonPoint(lat, lng));
+        // 注意：高德 SDK 该方法名拼写有历史错误，是 setPostion（不是 setPoint）
+        tip.setPostion(new LatLonPoint(lat, lng));
         return tip;
     }
 
