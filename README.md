@@ -43,7 +43,8 @@
 > [GitHub Releases（JS 版）](https://github.com/Qeccentric/GlobalTraveling/releases/latest) ｜
 > [蓝奏云（密码 4onp）](https://wwaon.lanzn.com/iqUY13h9prwj)
 >
-> 本 Fork 的安装包请在仓库 **Actions → Artifacts** 中获取。
+> 本 Fork 的安装包：**Releases 页面**（永久下载，推荐）或 **Actions → Artifacts**（90 天有效）。
+> 发布新版本只需推送 tag：`git tag v1.1.2 && git push origin v1.1.2`，CI 会自动构建并创建 Release。
 
 ---
 
