@@ -54,7 +54,7 @@
 
         <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_copy"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:minWidth="0dp"
@@ -66,7 +66,7 @@
 
     <!-- Web 服务 Key 输入框（推荐：申请最简单，搜索走高德 API 国内稳定） -->
     <com.google.android.material.textfield.TextInputLayout
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
@@ -89,7 +89,7 @@
 
     <!-- Android 平台 Key 输入框（可选：绑定包名+SHA1，SDK 原生搜索通道） -->
     <com.google.android.material.textfield.TextInputLayout
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
