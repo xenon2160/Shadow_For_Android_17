@@ -1,6 +1,8 @@
 package com.kankan.globaltraveling;
 
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
@@ -13,17 +15,22 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.cardview.widget.CardView;
+import androidx.core.content.ContextCompat;
+
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import com.amap.api.maps.AMap;
 import com.amap.api.maps.CameraUpdateFactory;
@@ -173,6 +180,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         etSearch = findViewById(R.id.et_search);
         historyContainer = findViewById(R.id.history_container);
 
+        // 搜索下拉浮层：白底圆角样式（替代系统默认的直角白板）
+        etSearch.setDropDownBackgroundDrawable(
+                ContextCompat.getDrawable(this, R.drawable.bg_search_dropdown));
+
         mapView = findViewById(R.id.map);
         // 使用保存的 Bundle 初始化地图
         mapView.onCreate(savedState);
@@ -275,33 +286,24 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         return key;
     }
 
-    /** 高德 API Key 填写弹窗（恢复原版的功能）。弹窗内展示本包名与当前签名 SHA1，
-     *  方便用户在高德控制台创建/修改 Key 时直接复制。 */
+    /** 高德 API Key 填写弹窗（Material 风格）。展示本包名与签名 SHA1，支持一键复制。 */
     private void showApiKeyDialog() {
-        final EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setHint("AMap-xxxxxxxxxxxxxxxxxxxxxxxx");
+        View view = LayoutInflater.from(this).inflate(R.layout.dialog_api_key, null);
+        final EditText input = view.findViewById(R.id.et_api_key);
+        TextView tvPkg = view.findViewById(R.id.tv_pkg);
+        TextView tvSha1 = view.findViewById(R.id.tv_sha1);
+        Button btnCopy = view.findViewById(R.id.btn_copy);
+
+        final String sha1 = getSignatureSha1();
+        tvPkg.setText("包名  " + AMAP_PKG);
+        tvSha1.setText("SHA1 " + sha1);
         input.setText(getSharedPreferences(PREF_APP, Context.MODE_PRIVATE).getString(KEY_AMAP, ""));
         input.setSelection(input.getText().length());
+        btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp2px(24), dp2px(8), dp2px(24), 0);
-        TextView tip = new TextView(this);
-        tip.setText("到 lbs.amap.com 控制台创建应用并创建 Key：\n" +
-                "包名：" + AMAP_PKG + "\n" +
-                "SHA1：" + getSignatureSha1() + "\n\n" +
-                "把 Key 粘贴到下方保存即可。\n" +
-                "（提示：不填 Key 也能搜索，走备用通道；但地图瓦片必须有 Key 才能显示。\n" +
-                "之后可长按顶部「已选」状态文字重新填写）");
-        tip.setTextSize(12);
-        tip.setTextColor(Color.parseColor("#666666"));
-        box.addView(tip);
-        box.addView(input);
-
-        new AlertDialog.Builder(this)
-                .setTitle("高德地图 API Key")
-                .setView(box)
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("设置高德地图 API Key")
+                .setView(view)
                 .setCancelable(true)
                 .setPositiveButton("保存", (dialog, which) -> {
                     String k = input.getText().toString().trim();
@@ -312,6 +314,15 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                 })
                 .setNegativeButton("暂不填写", null)
                 .show();
+    }
+
+    /** 复制文本到剪贴板 */
+    private void copyText(String label, String text) {
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null) {
+            cm.setPrimaryClip(ClipData.newPlainText(label, text));
+            Toast.makeText(this, "已复制 " + label, Toast.LENGTH_SHORT).show();
+        }
     }
 
     /** 获取当前安装包签名的 SHA1（高德 Key 绑定 包名+SHA1） */
@@ -431,22 +442,48 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         }
     }
 
-    /** 把结果展示到搜索框下拉列表 */
+    /** 把结果展示到搜索框下拉列表（Material 双行卡片式条目） */
     private void showTips(List<Tip> tips) {
-        ArrayAdapter<Tip> adapter = new ArrayAdapter<Tip>(this, android.R.layout.simple_list_item_1, tips) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                View view = super.getView(position, convertView, parent);
-                TextView text = (TextView) view.findViewById(android.R.id.text1);
-                text.setText(getItem(position).getName());
-                return view;
-            }
-        };
-        etSearch.setAdapter(adapter);
-        adapter.notifyDataSetChanged();
+        etSearch.setAdapter(new TipAdapter(tips));
         runOnUiThread(() -> {
             if (etSearch.hasFocus() && etSearch.getText().length() > 0) etSearch.showDropDown();
         });
+    }
+
+    /** 搜索建议适配器：图标 + 标题 + 地址副标题 */
+    private class TipAdapter extends ArrayAdapter<Tip> {
+        TipAdapter(List<Tip> tips) {
+            super(MainActivity.this, 0, tips);
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            return buildRow(position, convertView, parent);
+        }
+
+        @Override
+        public View getDropDownView(int position, View convertView, ViewGroup parent) {
+            return buildRow(position, convertView, parent);
+        }
+
+        private View buildRow(int position, View convertView, ViewGroup parent) {
+            View view = convertView;
+            if (view == null) {
+                view = LayoutInflater.from(getContext()).inflate(R.layout.item_search_tip, parent, false);
+            }
+            Tip tip = getItem(position);
+            TextView title = view.findViewById(R.id.tip_title);
+            TextView subtitle = view.findViewById(R.id.tip_subtitle);
+            title.setText(tip.getName());
+            String addr = tip.getAddress();
+            if (addr == null || addr.trim().isEmpty()) {
+                subtitle.setVisibility(View.GONE);
+            } else {
+                subtitle.setVisibility(View.VISIBLE);
+                subtitle.setText(addr);
+            }
+            return view;
+        }
     }
 
     /** 免 Key 备用搜索：优先 Photon，失败再试 Nominatim（均为 OpenStreetMap 公共服务） */
@@ -486,12 +523,19 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                     double lng = c.optDouble(0, Double.NaN);
                     double lat = c.optDouble(1, Double.NaN);
                     if (Double.isNaN(lat) || Double.isNaN(lng)) continue;
-                    String name = joinNonEmpty(p.optString("name"), p.optString("city"),
-                            p.optString("state"), p.optString("country"));
+                    // 标题=地点名，副标题=城市·省份·国家（去掉与标题重复的部分）
+                    String name = p.optString("name");
+                    String city = p.optString("city");
+                    String state = p.optString("state");
+                    String country = p.optString("country");
+                    if (name.isEmpty()) name = !city.isEmpty() ? city : (!state.isEmpty() ? state : country);
                     if (name.isEmpty()) continue;
+                    String addr = joinNonEmpty(city.equals(name) ? "" : city,
+                            state.equals(name) ? "" : state,
+                            country.equals(name) ? "" : country);
                     // Photon 返回 WGS-84，转成高德地图使用的 GCJ-02 坐标系
                     double[] gcj = wgs84ToGcj02(lng, lat);
-                    result.add(makeTip(name, gcj[1], gcj[0]));
+                    result.add(makeTip(name, addr, gcj[1], gcj[0]));
                 }
             }
         } catch (Throwable t) {
@@ -512,10 +556,17 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                 double lat = o.optDouble("lat", Double.NaN);
                 double lng = o.optDouble("lon", Double.NaN);
                 if (Double.isNaN(lat) || Double.isNaN(lng)) continue;
-                String name = o.optString("display_name", "");
-                if (name.isEmpty()) continue;
+                // display_name 形如 "街道, 区, 城市, 省, 国家" → 首段作标题，其余作副标题
+                String displayName = o.optString("display_name", "");
+                if (displayName.isEmpty()) continue;
+                String name = displayName, addr = "";
+                int cut = displayName.indexOf(',');
+                if (cut > 0) {
+                    name = displayName.substring(0, cut).trim();
+                    addr = displayName.substring(cut + 1).trim();
+                }
                 double[] gcj = wgs84ToGcj02(lng, lat);
-                result.add(makeTip(name, gcj[1], gcj[0]));
+                result.add(makeTip(name, addr, gcj[1], gcj[0]));
             }
         } catch (Throwable t) {
             Log.w("Shadow", "Nominatim 搜索失败: " + t);
@@ -541,9 +592,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         }
     }
 
-    private Tip makeTip(String name, double lat, double lng) {
+    private Tip makeTip(String name, String address, double lat, double lng) {
         Tip tip = new Tip();
         tip.setName(name);
+        if (address != null && !address.isEmpty()) tip.setAddress(address);
         // 注意：高德 SDK 该方法名拼写有历史错误，是 setPostion（不是 setPoint）
         tip.setPostion(new LatLonPoint(lat, lng));
         return tip;
