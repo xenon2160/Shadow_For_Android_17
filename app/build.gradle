@@ -3,19 +3,22 @@ plugins {
 }
 
 android {
+    // 注意：namespace 保持原值（Java 类/R 引用不变），仅改对外包名 applicationId
     namespace 'com.kankan.globaltraveling'
     // 编译到最新平台（Android 16+）。若提示缺少 SDK，让 Android Studio 自动下载即可。
     // 运行时兼容性由 HookMain 内的反射 + 安全 Hook 保证，不依赖 compileSdk。
     compileSdk 36
 
     defaultConfig {
-        applicationId "com.kankan.globaltraveling"
+        // 已改包名（防检测/隔离安装）。改包名后需同步：高德 Key 的包名、
+        // LSPosed 作用域、KernelSU 授权（见 README）。
+        applicationId "com.xenon.shadow2"
         minSdk 26
         // 保持 targetSdk 34：Android 17 仍完全兼容，且避免 targetSdk 35+ 的
         // 强制沉浸式(edge-to-edge)等行为变化影响现有 UI。
         targetSdk 34
-        versionCode 3
-        versionName "1.1.1"
+        versionCode 4
+        versionName "1.1.2"
 
         // 只打包 arm64，减小体积
         ndk {
@@ -41,6 +44,12 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+
+    buildFeatures {
+        // 生成 BuildConfig.APPLICATION_ID：HookMain 用它跳过自身包名、
+        // Key 弹窗用它展示包名，改包名时代码无需任何修改
+        buildConfig = true
     }
 
     // 解决 16KB 对齐报错

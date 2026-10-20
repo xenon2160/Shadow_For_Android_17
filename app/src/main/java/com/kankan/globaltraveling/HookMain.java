@@ -82,7 +82,8 @@ public class HookMain implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if (lpparam.packageName.equals("com.kankan.globaltraveling")) return;
+        // 跳过模块自身（用 BuildConfig 动态读取，改包名后无需改代码）
+        if (lpparam.packageName.equals(BuildConfig.APPLICATION_ID)) return;
 
         // ==========================================
         // 1. 定位核心劫持 (GPS)
