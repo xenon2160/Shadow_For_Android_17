@@ -7,8 +7,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
-import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.text.Editable;
@@ -18,6 +18,7 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
@@ -26,6 +27,7 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.cardview.widget.CardView;
 import androidx.core.content.ContextCompat;
@@ -289,16 +291,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     }
 
     /** 高德 API Key 填写弹窗（Material 风格）。展示本包名与签名 SHA1，支持一键复制。
-     *  深色模式下也固定以浅色渲染（与白色信息卡片统一）。 */
+     *  深色模式下也固定以白色弹窗呈现（show 后直接重绘背景与文字色，不依赖主题解析）。 */
     private void showApiKeyDialog() {
-        // 强制浅色模式上下文：深色模式下弹窗也按浅色主题渲染，
-        // 走系统标准 uiMode 解析，标题/背景/按钮颜色全部一致，不会半深半浅
-        Configuration lightConfig = new Configuration(getResources().getConfiguration());
-        lightConfig.uiMode = (lightConfig.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
-                | Configuration.UI_MODE_NIGHT_NO;
-        Context lightCtx = createConfigurationContext(lightConfig);
-
-        View view = LayoutInflater.from(lightCtx).inflate(R.layout.dialog_api_key, null);
+        View view = LayoutInflater.from(this).inflate(R.layout.dialog_api_key, null);
         final EditText input = view.findViewById(R.id.et_api_key);
         final EditText inputWeb = view.findViewById(R.id.et_api_key_web);
         TextView tvPkg = view.findViewById(R.id.tv_pkg);
@@ -314,12 +309,12 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         inputWeb.setText(prefs.getString(KEY_AMAP_WEB, ""));
         btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
-        // 使用浅色上下文创建弹窗（深色模式下依然全浅色，与信息卡片统一）
-        new MaterialAlertDialogBuilder(lightCtx)
+        // 常规创建弹窗，show 后直接重绘为白色圆角卡片（深浅色模式下效果完全一致）
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
                 .setTitle("设置高德地图 API Key")
                 .setView(view)
                 .setCancelable(true)
-                .setPositiveButton("保存", (dialog, which) -> {
+                .setPositiveButton("保存", (d, which) -> {
                     String k = input.getText().toString().trim();
                     SharedPreferences sp = getSharedPreferences(PREF_APP, Context.MODE_PRIVATE);
                     String oldK = sp.getString(KEY_AMAP, "");
@@ -335,7 +330,29 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                     }
                 })
                 .setNegativeButton("暂不填写", null)
-                .show();
+                .create();
+        dialog.show();
+        forceDialogWhite(dialog);
+    }
+
+    /** 把弹窗直接绘制为白色圆角卡片并重设文字颜色（不依赖主题解析，必定生效） */
+    private void forceDialogWhite(AlertDialog dialog) {
+        try {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                GradientDrawable bg = new GradientDrawable();
+                bg.setColor(Color.WHITE);
+                bg.setCornerRadius(dp2px(28));
+                window.setBackgroundDrawable(bg);
+            }
+            TextView title = dialog.findViewById(android.R.id.title);
+            if (title != null) title.setTextColor(Color.parseColor("#1C1B1F"));
+            Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (pos != null) pos.setTextColor(Color.parseColor("#5B8DEF"));
+            Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+            if (neg != null) neg.setTextColor(Color.parseColor("#888888"));
+        } catch (Throwable ignored) {}
+    }
     }
 
     /** 复制文本到剪贴板 */
