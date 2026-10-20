@@ -76,7 +76,7 @@
 
 本项目已在以下设备/系统版本上测试通过，理论上支持 Android 10 - 17（含澎湃OS 4）：
 | 设备型号 | Android 版本 | 系统 UI | 测试结果 |
-| **Xiaomi 11 Pro** | **Android 17** | 澎湃OS 4 | ✅ 完美运行（KernelSU + ReZygisk + Vector，定位模拟/搜索/微信均已验证） |
+| **Xiaomi 13** | **Android 17** | 澎湃OS 4 | ✅ 完美运行（KernelSU + ReZygisk + Vector，定位模拟/搜索/微信均已验证） |
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
 
@@ -215,4 +215,5 @@
 
 ---
 
-**Made with ❤️ by coolapk@堪堪sqr**
+**Original project made with ❤️ by coolapk@堪堪sqr**
+**Fork maintained by [@xenon2160](https://github.com/xenon2160)**
