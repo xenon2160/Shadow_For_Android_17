@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# 本地临时文件（框架安装包等，勿提交）
+*.zip
+*.apk
+modules_config.db*
+lspd-logs/
