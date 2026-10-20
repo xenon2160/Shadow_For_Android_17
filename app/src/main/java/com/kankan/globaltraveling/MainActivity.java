@@ -305,8 +305,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         inputWeb.setText(prefs.getString(KEY_AMAP_WEB, ""));
         btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
-        // M3 主题下自动获得 Material 3 弹窗样式（大圆角、M3 按钮）
-        new MaterialAlertDialogBuilder(this)
+        // 白色 Material 3 弹窗（深色模式下也固定白底，与包名/SHA1 信息卡片统一）
+        new MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_App_LightDialog)
                 .setTitle("设置高德地图 API Key")
                 .setView(view)
                 .setCancelable(true)
