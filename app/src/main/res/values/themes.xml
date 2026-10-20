@@ -5,4 +5,11 @@
 
 
     </style>
+
+    <!-- Key 设置弹窗：固定白色界面（深色模式下也保持白底，与信息卡片统一） -->
+    <style name="ThemeOverlay.App.LightDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#1C1B1F</item>
+        <item name="colorOnSurfaceVariant">#444444</item>
+    </style>
 </resources>
