@@ -90,6 +90,19 @@
 *   已安装 **LSPosed** 框架 (推荐 Zygisk 版)。
 *   (可选) 建议配合 **Shamiko** 和 **Hide My Applist** 使用，以隐藏 Root 环境。
 
+> **⚠️ 澎湃OS 4 / Android 17 用户必读**（已在 Xiaomi 11 Pro 澎湃OS 4 上实测通过）：
+> *   **不要用 ZygiskNext**——项目已停止维护，它在澎湃OS 4 上注入 App 进程时会崩溃
+>     （`SpecializeCommon` SIGABRT），导致**所有** Xposed 模块的 Hook 全部失效，
+>     表现为"模块已启用但定位不变"。
+> *   正确组合：**[ReZygisk](https://github.com/PerformanC/ReZygisk)** v1.0.0+
+>     （支持 Android 17）+ **[Vector](https://github.com/JingMatrix/Vector)** v2.2+
+>     （LSPosed 的现维护版本）。先卸载 ZygiskNext 和旧版 LSPosed 管理器 App，再装这两个，
+>     最后重启手机。
+> *   若 Vector 管理器打不开（黑屏闪退），可从 Vector 模块 zip 中解出 `manager.apk`
+>     手动安装。
+> *   排查注入是否生效：`adb shell su -c "cat /data/adb/lspd/log/modules_*.log"`，
+>     打开目标 App 后应出现 `[Shadow] Hooks installed for 包名`。
+
 ### 2. 安装与激活
 1.  下载并安装 `Shadow.apk`。
 2.  打开 App，授予 **Root 权限** 和 **存储权限**。
