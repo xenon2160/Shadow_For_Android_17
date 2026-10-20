@@ -12,7 +12,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="到 lbs.amap.com 控制台创建「Android平台」Key，绑定信息如下："
+        android:text="两种 Key 均为可选（地图底图不填也能显示）。推荐填「Web服务 Key」——申请最简单、无需绑定包名，搜索更稳定。创建时的绑定信息如下："
         android:textColor="#666666"
         android:textSize="13sp" />
 
@@ -64,13 +64,36 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Key 输入框（浮动标签） -->
+    <!-- Web 服务 Key 输入框（推荐：申请最简单，搜索走高德 API 国内稳定） -->
     <com.google.android.material.textfield.TextInputLayout
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
-        android:hint="AMap API Key"
+        android:hint="Web 服务 Key（推荐，搜索更稳定）"
+        app:boxCornerRadiusBottomEnd="12dp"
+        app:boxCornerRadiusBottomStart="12dp"
+        app:boxCornerRadiusTopEnd="12dp"
+        app:boxCornerRadiusTopStart="12dp"
+        app:boxStrokeColor="#5B8DEF">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/et_api_key_web"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:maxLines="1"
+            android:textSize="14sp"
+            android:fontFamily="monospace" />
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <!-- Android 平台 Key 输入框（可选：绑定包名+SHA1，SDK 原生搜索通道） -->
+    <com.google.android.material.textfield.TextInputLayout
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:hint="Android 平台 Key（可选）"
         app:boxCornerRadiusBottomEnd="12dp"
         app:boxCornerRadiusBottomStart="12dp"
         app:boxCornerRadiusTopEnd="12dp"
@@ -91,7 +114,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="不填 Key 也能搜索（备用通道），仅地图底图不显示；之后可长按顶部状态文字重新填写"
+        android:text="什么都不填：搜索走 OpenStreetMap 公共通道（需网络可达）；仅填 Web Key：搜索最稳定；之后可长按顶部状态文字重新填写"
         android:textColor="#AAAAAA"
         android:textSize="11sp" />
 </LinearLayout>

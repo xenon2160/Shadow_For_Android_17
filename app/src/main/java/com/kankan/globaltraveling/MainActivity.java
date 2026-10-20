@@ -81,6 +81,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
 
     // 高德地图 API Key（用户在弹窗中填写并保存）
     private static final String KEY_AMAP = "amap_api_key";
+    // 高德 Web 服务 Key（可选，用于搜索备用通道）
+    private static final String KEY_AMAP_WEB = "amap_web_key";
     // 动态取当前应用 ID（改包名后无需改代码）
     private static final String AMAP_PKG = BuildConfig.APPLICATION_ID;
 
@@ -290,6 +292,7 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     private void showApiKeyDialog() {
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_api_key, null);
         final EditText input = view.findViewById(R.id.et_api_key);
+        final EditText inputWeb = view.findViewById(R.id.et_api_key_web);
         TextView tvPkg = view.findViewById(R.id.tv_pkg);
         TextView tvSha1 = view.findViewById(R.id.tv_sha1);
         Button btnCopy = view.findViewById(R.id.btn_copy);
@@ -297,8 +300,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         final String sha1 = getSignatureSha1();
         tvPkg.setText("包名  " + AMAP_PKG);
         tvSha1.setText("SHA1 " + sha1);
-        input.setText(getSharedPreferences(PREF_APP, Context.MODE_PRIVATE).getString(KEY_AMAP, ""));
+        SharedPreferences prefs = getSharedPreferences(PREF_APP, Context.MODE_PRIVATE);
+        input.setText(prefs.getString(KEY_AMAP, ""));
         input.setSelection(input.getText().length());
+        inputWeb.setText(prefs.getString(KEY_AMAP_WEB, ""));
         btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
         new MaterialAlertDialogBuilder(this)
@@ -308,7 +313,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                 .setPositiveButton("保存", (dialog, which) -> {
                     String k = input.getText().toString().trim();
                     getSharedPreferences(PREF_APP, Context.MODE_PRIVATE)
-                            .edit().putString(KEY_AMAP, k).apply();
+                            .edit()
+                            .putString(KEY_AMAP, k)
+                            .putString(KEY_AMAP_WEB, inputWeb.getText().toString().trim())
+                            .apply();
                     Toast.makeText(this, "已保存，正在重新加载地图…", Toast.LENGTH_SHORT).show();
                     recreate(); // 重新走初始化流程，让新 Key 生效
                 })
@@ -486,24 +494,62 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         }
     }
 
-    /** 免 Key 备用搜索：优先 Photon，失败再试 Nominatim（均为 OpenStreetMap 公共服务） */
+    /** 备用搜索链（按国内可用性排序）：高德Web API（若有Web Key）→ Nominatim国内镜像 → Photon → Nominatim国际站 */
     private void fallbackSearch(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return;
         final String q = keyword.trim();
         new Thread(() -> {
-            List<Tip> tips = searchPhoton(q);
-            if (tips.isEmpty()) tips = searchNominatim(q);
+            List<Tip> tips = new ArrayList<>();
+            String webKey = getSharedPreferences(PREF_APP, Context.MODE_PRIVATE).getString(KEY_AMAP_WEB, "");
+            if (!webKey.isEmpty()) tips = searchAmapWeb(q, webKey);
+            if (tips.isEmpty()) tips = searchNominatim(q, "https://nominatim.openstreetmap.cn/search");
+            if (tips.isEmpty()) tips = searchPhoton(q);
+            if (tips.isEmpty()) tips = searchNominatim(q, "https://nominatim.openstreetmap.org/search");
             final List<Tip> finalTips = tips;
             runOnUiThread(() -> {
                 if (!finalTips.isEmpty()) {
                     showTips(finalTips);
                 } else {
                     Toast.makeText(MainActivity.this,
-                            "搜索失败：请检查网络，或在高德控制台确认 Key 有效",
+                            "搜索失败：请检查网络连接（备用搜索需联网）",
                             Toast.LENGTH_LONG).show();
                 }
             });
         }).start();
+    }
+
+    /** 高德 Web 服务 API 地点搜索（需 Web服务 Key；国内直连，返回 GCJ-02 坐标无需转换） */
+    private List<Tip> searchAmapWeb(String q, String key) {
+        List<Tip> result = new ArrayList<>();
+        try {
+            String url = "https://restapi.amap.com/v3/place/text?offset=6&extensions=base&keywords="
+                    + URLEncoder.encode(q, "UTF-8") + "&key=" + URLEncoder.encode(key, "UTF-8");
+            JSONObject root = new JSONObject(httpGet(url));
+            if (!"1".equals(root.optString("status"))) {
+                Log.w("Shadow", "高德Web搜索失败: " + root.optString("info"));
+                return result;
+            }
+            JSONArray pois = root.optJSONArray("pois");
+            if (pois != null) {
+                for (int i = 0; i < pois.length(); i++) {
+                    JSONObject p = pois.optJSONObject(i);
+                    if (p == null) continue;
+                    String name = p.optString("name");
+                    String loc = p.optString("location");
+                    if (name.isEmpty() || loc.isEmpty()) continue;
+                    String[] ll = loc.split(",");
+                    if (ll.length < 2) continue;
+                    double lat = Double.parseDouble(ll[1]);
+                    double lng = Double.parseDouble(ll[0]);
+                    String addr = p.optString("address");
+                    if (addr.isEmpty()) addr = joinNonEmpty(p.optString("province"), p.optString("city"));
+                    result.add(makeTip(name, addr, lat, lng));
+                }
+            }
+        } catch (Throwable t) {
+            Log.w("Shadow", "高德Web搜索异常: " + t);
+        }
+        return result;
     }
 
     private List<Tip> searchPhoton(String q) {
@@ -544,10 +590,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         return result;
     }
 
-    private List<Tip> searchNominatim(String q) {
+    private List<Tip> searchNominatim(String q, String endpoint) {
         List<Tip> result = new ArrayList<>();
         try {
-            String url = "https://nominatim.openstreetmap.org/search?format=jsonv2&accept-language=zh&limit=6&q="
+            String url = endpoint + "?format=jsonv2&accept-language=zh&limit=6&q="
                     + URLEncoder.encode(q, "UTF-8");
             JSONArray arr = new JSONArray(httpGet(url));
             for (int i = 0; i < arr.length(); i++) {
