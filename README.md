@@ -4,18 +4,71 @@
 ![LSPosed](https://img.shields.io/badge/LSPosed-Module-blue.svg)
 ![License](https://img.shields.io/badge/License-GPL%20v3.0-orange.svg)
 
-推荐使用 JS 版，如果不想注册高德账号，继续使用 1.0 版本。
-### 📥 [点击下载最新版 JS](https://github.com/Qeccentric/GlobalTraveling/releases/latest)
-### 📥 [ 蓝奏云 支持填入KEY 密码:4onp](https://wwaon.lanzn.com/iqUY13h9prwj)
+> 🍴 本仓库是 [原项目 GlobalTraveling](https://github.com/Qeccentric/GlobalTraveling) 的 Fork，
+> 由 [@xenon2160](https://github.com/xenon2160) 维护。已完成 **Android 17 / 澎湃OS 4** 全面适配，
+> 应用 ID 为 `com.xenon.shadow2`（1.1.2+），支持 GitHub Actions 云端构建一键出包。
+
+## 🔧 本 Fork 相对原版的主要工作
+
+> 以下修复与增强使项目在 **Android 17 / 澎湃OS 4** 上真正可用，
+> 并修复了长期失效的搜索与 Key 流程：
+
+| 类别 | 工作内容 |
+| --- | --- |
+| **Android 17 适配** | `HookMain` 全面重构：每个 Hook 独立容错（单个 API 移除不再拖垮整个模块）、Location 优先用公开 setter 修改、`WifiInfo.mBSSID` 按新类型 `MacAddress` 赋值、补充 `Location.isMock()` 屏蔽、监听器改用 `instanceof` 判断（覆盖 Lambda/Consumer 路径）、LastKnownLocation 补全防"定位中"转圈 |
+| **澎湃OS 4 框架排查** | 定位到 **ZygiskNext 在 Android 17 孵化 App 进程时崩溃**（Scene 等所有模块失效的共同根因），确立 **ReZygisk + Vector(LSPosed)** 可用组合并写入文档；解决 Vector 管理器黑屏问题（从模块包手动安装 `manager.apk`） |
+| **云端构建** | 搭建 **GitHub Actions** 流水线（JDK 21 + Gradle 9.1），无本地 Android 环境也能出包；提交**固定调试签名** `ci-debug.keystore`，解决高德 Key 因构建签名漂移反复失效的问题 |
+| **构建链升级** | AGP 9.0 / Gradle 9.1 / compileSdk 36；Manifest 移除 `package` 属性改用 `namespace` |
+| **高德 SDK 修复** | `3dmap` 升级 10.0.600（适配 16KB 内存页新机型）；锁定 `search:9.7.0` 解决 9.7.1 与 3dmap 的**重复类编译冲突**；补齐原仓库漏传的 `ic_search_line` 图标资源 |
+| **搜索功能修复** | 失败错误码可见（不再静默）；内置**免 Key 备用搜索通道**（OpenStreetMap Photon → Nominatim，含 WGS-84 → GCJ-02 坐标转换）；适配高德 SDK 历史拼写 `setPostion` |
+| **Key 流程恢复** | 恢复原版缺失的**高德 Key 填写弹窗**（运行时 `setApiKey` 注入）；弹窗内自动展示包名/SHA1 并支持一键复制；代码改用 `BuildConfig.APPLICATION_ID` 动态读取自身包名 |
+| **包名变更** | 应用 ID 改为 `com.xenon.shadow2`，降低被目标 App 按包名识别为 Xposed 模块的概率；今后改包名只需改 `build.gradle` 一行 |
+| **UI 现代化** | Key 弹窗重绘为 Material 风格（描边输入框 + 信息卡片）；搜索下拉改为双行卡片条目（定位图标 + 地点名 + 地址副标题）+ 圆角浮层 |
+| **体验修复** | 未选点时点「开始模拟」增加 Toast 提示（原为静默无反应） |
+
+---
+
+## 📖 项目介绍
+
 **Shadow** 是一款基于 **LSPosed** 框架的 Android 系统级虚拟定位与环境伪装模块。
 
 不同于传统的 Mock Location（模拟位置），本项目采用 **系统层 Hook + 底层文件交互** 的方式，能够对系统 GPS、基站信息 (Cell)、Wi-Fi 列表及各大地图 SDK（高德/腾讯）、GMS进行全维度的位置模拟。
-
 
 > **核心特性**：
 > *   **底层劫持**：直接 Hook 系统服务与 SDK，无视普通防作弊检测。
 > *   **环境伪装**：自动伪造 Wi-Fi BSSID 与基站信息，防止通过网络环境反查真实位置。
 > *   **防跳回**：针对高德、钉钉、企业微信等应用做了深度适配，防止位置回弹。
+
+> 📥 原作者的下载渠道（旧版 1.0 / JS 版，**未包含本 Fork 的修复**，仅供对照）：
+> [GitHub Releases（JS 版）](https://github.com/Qeccentric/GlobalTraveling/releases/latest) ｜
+> [蓝奏云（密码 4onp）](https://wwaon.lanzn.com/iqUY13h9prwj)
+>
+> 本 Fork 的安装包请在仓库 **Actions → Artifacts** 中获取。
+
+---
+
+## 📦 澎湃OS 4 / Android 17 用户必读：正确的模块组合
+
+> 很多人升级 Android 17 后发现「模块装了、开关开了、作用域也勾了，但就是不生效」——
+> 根因几乎都是 **ZygiskNext**：它已停止维护，在澎湃OS 4 上注入 App 进程时会崩溃
+>（`SpecializeCommon` SIGABRT），导致**所有** Xposed 模块（Shadow、Scene……）的
+> Hook 全部失效。**抛弃 ZygiskNext 是让一切模块恢复工作的前提。**
+
+| 操作 | 组件 | 说明 |
+| --- | --- | --- |
+| ❌ **必须卸载** | **ZygiskNext**（KernelSU 中模块名 `zygisksu`） | 已停止维护，Android 17 上注入必崩 |
+| ❌ **必须卸载** | 旧版独立 **LSPosed Manager** App（`org.lsposed.manager`） | 无法连接新版服务，点通知黑屏闪退 |
+| ✅ **必须安装** | **[ReZygisk](https://github.com/PerformanC/ReZygisk)** v1.0.0+ | ZygiskNext 的社区续作，明确支持 Android 17 |
+| ✅ **必须安装** | **[Vector](https://github.com/JingMatrix/Vector)** v2.2+ | LSPosed 的现维护版本（LSPosed 已更名 Vector） |
+| ➕ 按需保留 | KernelSU / Magisk、Scene、Shamiko、Hide My Applist… | 其余模块可继续搭配 |
+
+**安装顺序**：
+
+1.  KernelSU 管理器 → 模块 → **卸载 `zygisksu`**（ZygiskNext）→ 安装 **ReZygisk** 模块 zip
+2.  安装/更新 **Vector** 模块 zip（若管理器打不开：从 zip 中解出 `manager.apk` 手动安装即可）
+3.  **重启手机** → Vector 管理器中启用 Shadow、勾选目标 App 作用域 → 再重启一次
+4.  强停目标 App 后重开，验证注入：`adb shell su -c "cat /data/adb/lspd/log/modules_*.log"`，
+    出现 `[Shadow] Hooks installed for 包名` 即大功告成
 
 ---
 
@@ -23,6 +76,7 @@
 
 本项目已在以下设备/系统版本上测试通过，理论上支持 Android 10 - 17（含澎湃OS 4）：
 | 设备型号 | Android 版本 | 系统 UI | 测试结果 |
+| **Xiaomi 11 Pro** | **Android 17** | 澎湃OS 4 | ✅ 完美运行（KernelSU + ReZygisk + Vector，定位模拟/搜索/微信均已验证） |
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
 
@@ -115,18 +169,9 @@
 *   已安装 **LSPosed** 框架 (推荐 Zygisk 版)。
 *   (可选) 建议配合 **Shamiko** 和 **Hide My Applist** 使用，以隐藏 Root 环境。
 
-> **⚠️ 澎湃OS 4 / Android 17 用户必读**（已在 Xiaomi 11 Pro 澎湃OS 4 上实测通过）：
-> *   **不要用 ZygiskNext**——项目已停止维护，它在澎湃OS 4 上注入 App 进程时会崩溃
->     （`SpecializeCommon` SIGABRT），导致**所有** Xposed 模块的 Hook 全部失效，
->     表现为"模块已启用但定位不变"。
-> *   正确组合：**[ReZygisk](https://github.com/PerformanC/ReZygisk)** v1.0.0+
->     （支持 Android 17）+ **[Vector](https://github.com/JingMatrix/Vector)** v2.2+
->     （LSPosed 的现维护版本）。先卸载 ZygiskNext 和旧版 LSPosed 管理器 App，再装这两个，
->     最后重启手机。
-> *   若 Vector 管理器打不开（黑屏闪退），可从 Vector 模块 zip 中解出 `manager.apk`
->     手动安装。
-> *   排查注入是否生效：`adb shell su -c "cat /data/adb/lspd/log/modules_*.log"`，
->     打开目标 App 后应出现 `[Shadow] Hooks installed for 包名`。
+> **⚠️ 澎湃OS 4 / Android 17 用户必读**：**不要用 ZygiskNext**（已停维护，在澎湃OS 4 上
+> 会导致所有 Xposed 模块失效）。正确的模块组合（ReZygisk + Vector）与安装顺序见上文
+> **「📦 澎湃OS 4 / Android 17 用户必读：正确的模块组合」** 一节。
 
 ### 2. 安装与激活
 1.  下载并安装 `Shadow.apk`。
