@@ -1,6 +1,5 @@
 package com.kankan.globaltraveling;
 
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -147,8 +146,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
             return true; // 已同意，继续
         }
 
-        // 显示弹窗
-        new AlertDialog.Builder(this)
+        // 显示弹窗（M3 主题下自动为 Material 3 风格）
+        new MaterialAlertDialogBuilder(this)
                 .setTitle("使用须知")
                 .setMessage("欢迎使用 Shadow！\n\n" +
                         "1. 本软件仅供技术研究与学习使用，禁止用于任何非法用途（如考勤作弊、游戏外挂等）。\n" +
@@ -306,9 +305,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         inputWeb.setText(prefs.getString(KEY_AMAP_WEB, ""));
         btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
-        // Material 3 风格弹窗（大圆角、M3 按钮样式）
-        new MaterialAlertDialogBuilder(this,
-                com.google.android.material.R.style.ThemeOverlay_Material3_MaterialAlertDialog)
+        // M3 主题下自动获得 Material 3 弹窗样式（大圆角、M3 按钮）
+        new MaterialAlertDialogBuilder(this)
                 .setTitle("设置高德地图 API Key")
                 .setView(view)
                 .setCancelable(true)
