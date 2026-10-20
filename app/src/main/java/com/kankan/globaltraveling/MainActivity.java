@@ -345,7 +345,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                 bg.setCornerRadius(dp2px(28));
                 window.setBackgroundDrawable(bg);
             }
-            TextView title = dialog.findViewById(android.R.id.title);
+            // M3 弹窗的标题控件 ID 是 alertTitle（android.R.id.title 在其上找不到）
+            TextView title = dialog.findViewById(com.google.android.material.R.id.alertTitle);
+            if (title == null) title = dialog.findViewById(android.R.id.title);
             if (title != null) title.setTextColor(Color.parseColor("#1C1B1F"));
             Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             if (pos != null) pos.setTextColor(Color.parseColor("#5B8DEF"));
