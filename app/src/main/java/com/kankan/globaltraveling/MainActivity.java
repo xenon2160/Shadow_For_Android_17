@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -287,9 +288,17 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         return key;
     }
 
-    /** 高德 API Key 填写弹窗（Material 风格）。展示本包名与签名 SHA1，支持一键复制。 */
+    /** 高德 API Key 填写弹窗（Material 风格）。展示本包名与签名 SHA1，支持一键复制。
+     *  深色模式下也固定以浅色渲染（与白色信息卡片统一）。 */
     private void showApiKeyDialog() {
-        View view = LayoutInflater.from(this).inflate(R.layout.dialog_api_key, null);
+        // 强制浅色模式上下文：深色模式下弹窗也按浅色主题渲染，
+        // 走系统标准 uiMode 解析，标题/背景/按钮颜色全部一致，不会半深半浅
+        Configuration lightConfig = new Configuration(getResources().getConfiguration());
+        lightConfig.uiMode = (lightConfig.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
+                | Configuration.UI_MODE_NIGHT_NO;
+        Context lightCtx = createConfigurationContext(lightConfig);
+
+        View view = LayoutInflater.from(lightCtx).inflate(R.layout.dialog_api_key, null);
         final EditText input = view.findViewById(R.id.et_api_key);
         final EditText inputWeb = view.findViewById(R.id.et_api_key_web);
         TextView tvPkg = view.findViewById(R.id.tv_pkg);
@@ -305,8 +314,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         inputWeb.setText(prefs.getString(KEY_AMAP_WEB, ""));
         btnCopy.setOnClickListener(v -> copyText("SHA1", sha1));
 
-        // 白色 Material 3 弹窗（深色模式下也固定白底，与包名/SHA1 信息卡片统一）
-        new MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_App_LightDialog)
+        // 使用浅色上下文创建弹窗（深色模式下依然全浅色，与信息卡片统一）
+        new MaterialAlertDialogBuilder(lightCtx)
                 .setTitle("设置高德地图 API Key")
                 .setView(view)
                 .setCancelable(true)
