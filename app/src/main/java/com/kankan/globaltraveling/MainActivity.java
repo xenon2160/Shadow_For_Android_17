@@ -3,17 +3,22 @@ package com.kankan.globaltraveling;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -26,12 +31,23 @@ import com.amap.api.maps.MapView;
 import com.amap.api.maps.MapsInitializer;
 import com.amap.api.maps.model.LatLng;
 import com.amap.api.maps.model.MarkerOptions;
+import com.amap.api.services.core.LatLonPoint;
 import com.amap.api.services.core.ServiceSettings;
 import com.amap.api.services.help.Inputtips;
 import com.amap.api.services.help.InputtipsQuery;
 import com.amap.api.services.help.Tip;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.DataOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -56,6 +72,10 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     private static final String PREF_APP = "AppConfig";
     private static final String KEY_AGREED = "is_agreed_disclaimer";
 
+    // 高德地图 API Key（用户在弹窗中填写并保存）
+    private static final String KEY_AMAP = "amap_api_key";
+    private static final String AMAP_PKG = "com.kankan.globaltraveling";
+
     private String fixedMac;
     private String fixedSSID;
     private double selectLat = 0;
@@ -65,6 +85,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     // 防抖
     private Handler searchHandler = new Handler();
     private Runnable searchRunnable;
+
+    // 记录最近一次搜索词（供高德接口失败时的备用搜索使用）
+    private String lastQuery = "";
 
     // 保存 SavedInstanceState 供延迟初始化使用
     private Bundle savedState;
@@ -140,6 +163,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
      * 核心初始化逻辑 (布局加载、地图初始化)
      */
     private void initApp() {
+        // 必须在 MapView 初始化之前把 Key 注入 SDK
+        String amapKey = applyAmapKey();
+
         setContentView(R.layout.activity_main);
 
         tvStatus = findViewById(R.id.tv_status);
@@ -170,6 +196,7 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                 searchRunnable = () -> {
                     String newText = s.toString().trim();
                     if (newText.length() > 0) {
+                        lastQuery = newText;
                         InputtipsQuery inputquery = new InputtipsQuery(newText, "");
                         inputquery.setCityLimit(false);
                         Inputtips inputTips = new Inputtips(MainActivity.this, inputquery);
@@ -219,6 +246,89 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                     .apply();
             Toast.makeText(this, "✅ 已设为默认位置", Toast.LENGTH_SHORT).show();
         });
+
+        // 长按顶部状态文字可重新填写高德 Key
+        tvStatus.setOnLongClickListener(v -> {
+            showApiKeyDialog();
+            return true;
+        });
+
+        // 未填 Key 时主动提示（地图瓦片与高德搜索需要 Key；
+        // 搜索同时内置了免 Key 备用通道，不填也能搜，但地图无法加载）
+        if (amapKey.isEmpty()) {
+            tvStatus.post(this::showApiKeyDialog);
+        }
+    }
+
+    /** 读取用户保存的高德 Key 并注入地图/搜索 SDK（必须在 MapView 创建前调用） */
+    private String applyAmapKey() {
+        String key = getSharedPreferences(PREF_APP, Context.MODE_PRIVATE).getString(KEY_AMAP, "");
+        if (!key.isEmpty()) {
+            try { MapsInitializer.setApiKey(key); } catch (Throwable t) {
+                Log.w("Shadow", "地图 setApiKey 失败: " + t);
+            }
+            try { ServiceSettings.getInstance().setApiKey(key); } catch (Throwable t) {
+                Log.w("Shadow", "搜索 setApiKey 失败: " + t);
+            }
+        }
+        return key;
+    }
+
+    /** 高德 API Key 填写弹窗（恢复原版的功能）。弹窗内展示本包名与当前签名 SHA1，
+     *  方便用户在高德控制台创建/修改 Key 时直接复制。 */
+    private void showApiKeyDialog() {
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("AMap-xxxxxxxxxxxxxxxxxxxxxxxx");
+        input.setText(getSharedPreferences(PREF_APP, Context.MODE_PRIVATE).getString(KEY_AMAP, ""));
+        input.setSelection(input.getText().length());
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp2px(24), dp2px(8), dp2px(24), 0);
+        TextView tip = new TextView(this);
+        tip.setText("到 lbs.amap.com 控制台创建应用并创建 Key：\n" +
+                "包名：" + AMAP_PKG + "\n" +
+                "SHA1：" + getSignatureSha1() + "\n\n" +
+                "把 Key 粘贴到下方保存即可。\n" +
+                "（提示：不填 Key 也能搜索，走备用通道；但地图瓦片必须有 Key 才能显示。\n" +
+                "之后可长按顶部「已选」状态文字重新填写）");
+        tip.setTextSize(12);
+        tip.setTextColor(Color.parseColor("#666666"));
+        box.addView(tip);
+        box.addView(input);
+
+        new AlertDialog.Builder(this)
+                .setTitle("高德地图 API Key")
+                .setView(box)
+                .setCancelable(true)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    String k = input.getText().toString().trim();
+                    getSharedPreferences(PREF_APP, Context.MODE_PRIVATE)
+                            .edit().putString(KEY_AMAP, k).apply();
+                    Toast.makeText(this, "已保存，正在重新加载地图…", Toast.LENGTH_SHORT).show();
+                    recreate(); // 重新走初始化流程，让新 Key 生效
+                })
+                .setNegativeButton("暂不填写", null)
+                .show();
+    }
+
+    /** 获取当前安装包签名的 SHA1（高德 Key 绑定 包名+SHA1） */
+    private String getSignatureSha1() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_SIGNATURES);
+            Signature sig = info.signatures[0];
+            MessageDigest md = MessageDigest.getInstance("SHA1");
+            byte[] digest = md.digest(sig.toByteArray());
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < digest.length; i++) {
+                sb.append(String.format("%02X", digest[i]));
+                if (i < digest.length - 1) sb.append(":");
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return "获取失败";
+        }
     }
 
     // --- 辅助逻辑保持不变 ---
@@ -311,22 +421,180 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
 
     @Override
     public void onGetInputtips(List<Tip> tipList, int rCode) {
-        if (rCode == 1000 && tipList != null) {
-            ArrayAdapter<Tip> adapter = new ArrayAdapter<Tip>(this, android.R.layout.simple_list_item_1, tipList) {
-                @Override
-                public View getView(int position, View convertView, ViewGroup parent) {
-                    View view = super.getView(position, convertView, parent);
-                    TextView text = (TextView) view.findViewById(android.R.id.text1);
-                    text.setText(getItem(position).getName());
-                    return view;
-                }
-            };
-            etSearch.setAdapter(adapter);
-            adapter.notifyDataSetChanged();
-            runOnUiThread(() -> {
-                if (etSearch.hasFocus() && etSearch.getText().length() > 0) etSearch.showDropDown();
-            });
+        if (rCode == 1000 && tipList != null && !tipList.isEmpty()) {
+            showTips(tipList);
+        } else {
+            // 高德接口失败（未填/无效 Key、QPS 限流等）→ 自动切换免 Key 备用搜索
+            Log.w("Shadow", "高德 Inputtips 失败 rCode=" + rCode + "，切换备用搜索");
+            fallbackSearch(lastQuery);
         }
+    }
+
+    /** 把结果展示到搜索框下拉列表 */
+    private void showTips(List<Tip> tips) {
+        ArrayAdapter<Tip> adapter = new ArrayAdapter<Tip>(this, android.R.layout.simple_list_item_1, tips) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                TextView text = (TextView) view.findViewById(android.R.id.text1);
+                text.setText(getItem(position).getName());
+                return view;
+            }
+        };
+        etSearch.setAdapter(adapter);
+        adapter.notifyDataSetChanged();
+        runOnUiThread(() -> {
+            if (etSearch.hasFocus() && etSearch.getText().length() > 0) etSearch.showDropDown();
+        });
+    }
+
+    /** 免 Key 备用搜索：优先 Photon，失败再试 Nominatim（均为 OpenStreetMap 公共服务） */
+    private void fallbackSearch(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) return;
+        final String q = keyword.trim();
+        new Thread(() -> {
+            List<Tip> tips = searchPhoton(q);
+            if (tips.isEmpty()) tips = searchNominatim(q);
+            final List<Tip> finalTips = tips;
+            runOnUiThread(() -> {
+                if (!finalTips.isEmpty()) {
+                    showTips(finalTips);
+                } else {
+                    Toast.makeText(MainActivity.this,
+                            "搜索失败：请检查网络，或在高德控制台确认 Key 有效",
+                            Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
+    }
+
+    private List<Tip> searchPhoton(String q) {
+        List<Tip> result = new ArrayList<>();
+        try {
+            String url = "https://photon.komoot.io/api/?limit=6&lang=zh&q=" + URLEncoder.encode(q, "UTF-8");
+            JSONObject root = new JSONObject(httpGet(url));
+            JSONArray features = root.optJSONArray("features");
+            if (features != null) {
+                for (int i = 0; i < features.length(); i++) {
+                    JSONObject f = features.optJSONObject(i);
+                    if (f == null) continue;
+                    JSONObject geom = f.optJSONObject("geometry");
+                    JSONObject p = f.optJSONObject("properties");
+                    JSONArray c = geom == null ? null : geom.optJSONArray("coordinates");
+                    if (c == null || p == null || c.length() < 2) continue;
+                    double lng = c.optDouble(0, Double.NaN);
+                    double lat = c.optDouble(1, Double.NaN);
+                    if (Double.isNaN(lat) || Double.isNaN(lng)) continue;
+                    String name = joinNonEmpty(p.optString("name"), p.optString("city"),
+                            p.optString("state"), p.optString("country"));
+                    if (name.isEmpty()) continue;
+                    // Photon 返回 WGS-84，转成高德地图使用的 GCJ-02 坐标系
+                    double[] gcj = wgs84ToGcj02(lng, lat);
+                    result.add(makeTip(name, gcj[1], gcj[0]));
+                }
+            }
+        } catch (Throwable t) {
+            Log.w("Shadow", "Photon 搜索失败: " + t);
+        }
+        return result;
+    }
+
+    private List<Tip> searchNominatim(String q) {
+        List<Tip> result = new ArrayList<>();
+        try {
+            String url = "https://nominatim.openstreetmap.org/search?format=jsonv2&accept-language=zh&limit=6&q="
+                    + URLEncoder.encode(q, "UTF-8");
+            JSONArray arr = new JSONArray(httpGet(url));
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                double lat = o.optDouble("lat", Double.NaN);
+                double lng = o.optDouble("lon", Double.NaN);
+                if (Double.isNaN(lat) || Double.isNaN(lng)) continue;
+                String name = o.optString("display_name", "");
+                if (name.isEmpty()) continue;
+                double[] gcj = wgs84ToGcj02(lng, lat);
+                result.add(makeTip(name, gcj[1], gcj[0]));
+            }
+        } catch (Throwable t) {
+            Log.w("Shadow", "Nominatim 搜索失败: " + t);
+        }
+        return result;
+    }
+
+    private String httpGet(String urlStr) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+        conn.setConnectTimeout(6000);
+        conn.setReadTimeout(6000);
+        conn.setRequestProperty("User-Agent", "GlobalTraveling/1.1 (Android app)");
+        try {
+            InputStream in = conn.getInputStream();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+            reader.close();
+            return sb.toString();
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    private Tip makeTip(String name, double lat, double lng) {
+        Tip tip = new Tip();
+        tip.setName(name);
+        tip.setPoint(new LatLonPoint(lat, lng));
+        return tip;
+    }
+
+    private String joinNonEmpty(String... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts) {
+            if (p == null || p.trim().isEmpty()) continue;
+            if (sb.length() > 0) sb.append(" · ");
+            sb.append(p.trim());
+        }
+        return sb.toString();
+    }
+
+    // ==================== WGS-84 → GCJ-02 坐标转换（开源标准算法） ====================
+    private static final double GCJ_A = 6378245.0;
+    private static final double GCJ_EE = 0.00669342162296594323;
+
+    private static boolean outOfChina(double lng, double lat) {
+        return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+    }
+
+    private static double transformLat(double x, double y) {
+        double ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y
+                + 0.2 * Math.sqrt(Math.abs(x));
+        ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+        ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+        return ret;
+    }
+
+    private static double transformLng(double x, double y) {
+        double ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y
+                + 0.1 * Math.sqrt(Math.abs(x));
+        ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+        ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+        ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+        return ret;
+    }
+
+    /** WGS-84 转 GCJ-02（火星坐标）。境外坐标原样返回。返回 [lng, lat] */
+    private static double[] wgs84ToGcj02(double lng, double lat) {
+        if (outOfChina(lng, lat)) return new double[]{lng, lat};
+        double dLat = transformLat(lng - 105.0, lat - 35.0);
+        double dLng = transformLng(lng - 105.0, lat - 35.0);
+        double radLat = lat / 180.0 * Math.PI;
+        double magic = Math.sin(radLat);
+        magic = 1 - GCJ_EE * magic * magic;
+        double sqrtMagic = Math.sqrt(magic);
+        dLat = (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
+        dLng = (dLng * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
+        return new double[]{lng + dLng, lat + dLat};
     }
 
     private void updateSelection(double lat, double lng, String title) {
