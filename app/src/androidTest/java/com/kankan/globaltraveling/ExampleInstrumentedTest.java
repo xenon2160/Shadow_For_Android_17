@@ -21,6 +21,7 @@ public class ExampleInstrumentedTest {
     public void useAppContext() {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        assertEquals("com.kankan.globaltraveling", appContext.getPackageName());
+        // 应用 ID 已改为 com.xenon.shadow2（namespace 不变）
+        assertEquals("com.xenon.shadow2", appContext.getPackageName());
     }
 }

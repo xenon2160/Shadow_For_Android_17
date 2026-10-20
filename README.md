@@ -26,6 +26,17 @@
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
 
+### 🆕 1.1.2 版本：应用包名变更
+
+*   应用 ID（applicationId）由 `com.kankan.globaltraveling` 改为 **`com.xenon.shadow2`**，
+    降低被目标 App 按包名识别为 Xposed 模块的概率。
+*   代码内部已改为通过 `BuildConfig.APPLICATION_ID` 动态读取自身包名，
+    **今后再改包名只需改 `build.gradle` 一行**，无需动 Java 代码。
+*   ⚠️ 从旧包名升级等同于安装新应用：需重新配置**高德 Key 包名**、
+    重新勾选 **LSPosed 作用域**、重新授予 **KernelSU Root 权限**。
+
+---
+
 ### 🆕 1.1.1 版本：搜索功能修复 & 高德 Key 流程恢复
 
 *   **恢复高德 Key 填写弹窗**（原版有、仓库源码缺失的功能）：首次启动自动提示填写，
@@ -121,7 +132,7 @@
 1.  下载并安装 `Shadow.apk`。
 2.  打开 App，授予 **Root 权限** 和 **存储权限**。
 3.  **首次启动会弹窗要求填写高德 API Key**（地图瓦片必须有 Key 才能显示）：
-    *   到 [lbs.amap.com](https://lbs.amap.com) 控制台创建应用，**包名填 `com.kankan.globaltraveling`**；
+    *   到 [lbs.amap.com](https://lbs.amap.com) 控制台创建应用，**包名填 `com.xenon.shadow2`**（自 1.1.2 起应用 ID 已由 `com.kankan.globaltraveling` 改为 `com.xenon.shadow2`）；
     *   **SHA1 填弹窗中显示的那串**（App 已自动算好，直接复制即可；CI 构建的 SHA1 恒为 `09:F4:55:2F:EE:41:0E:DA:81:27:01:3C:47:74:B5:EE:4D:38:76:9C`）；
     *   之后可**长按顶部「已选」状态文字**重新填写 Key。
     *   搜索功能已内置**免 Key 备用通道**（OpenStreetMap），不填 Key 也能搜，仅地图不显示。

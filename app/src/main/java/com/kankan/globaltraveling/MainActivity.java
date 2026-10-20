@@ -74,7 +74,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
 
     // 高德地图 API Key（用户在弹窗中填写并保存）
     private static final String KEY_AMAP = "amap_api_key";
-    private static final String AMAP_PKG = "com.kankan.globaltraveling";
+    // 动态取当前应用 ID（改包名后无需改代码）
+    private static final String AMAP_PKG = BuildConfig.APPLICATION_ID;
 
     private String fixedMac;
     private String fixedSSID;
