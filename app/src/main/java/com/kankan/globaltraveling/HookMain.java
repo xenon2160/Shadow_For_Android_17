@@ -22,6 +22,7 @@ import android.telephony.TelephonyManager;
 import android.bluetooth.BluetoothAdapter;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -64,8 +65,6 @@ public class HookMain implements IXposedHookLoadPackage {
 
     private static final String FILE_PATH = "/data/local/tmp/irest_loc.conf";
     private static final String TAG = "[Shadow] ";
-    // 诊断日志 tag（直接进 logcat，adb logcat -s ShadowTP 可实时观察小程序定位链路）
-    private static final String LT = "ShadowTP";
 
     // 缓存当前的指纹信息 (默认为保底值)
     private static String cachedMac = "00:11:22:33:44:55";
@@ -89,6 +88,23 @@ public class HookMain implements IXposedHookLoadPackage {
     private final Set<Class<?>> tencentHooked =
             Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
     private volatile boolean tencentWatcherInstalled = false;
+    // 诊断日志写文件用（澎湃OS 4 封锁 logcat 读取，改走文件通道）
+    private static volatile Context diagCtx = null;
+    private static volatile long lastGetterLogTime = 0;
+
+    /** 诊断日志：写入宿主 App 外部存储 shadowtp.log（adb 可直读） + logcat（万一能用） */
+    private static void dlog(String msg) {
+        String line = System.currentTimeMillis() % 100000000 + " " + msg;
+        Log.i("ShadowTP", msg);
+        try {
+            Context c = diagCtx;
+            if (c == null) return;
+            File f = new File(c.getExternalFilesDir(null), "shadowtp.log");
+            FileWriter w = new FileWriter(f, true);
+            w.write(line + "\n");
+            w.close();
+        } catch (Throwable ignored) {}
+    }
 
     /** 所有 Hook 统一走这里：单个 Hook 失败只记日志，不影响其余 Hook（Android 17 兼容关键） */
     private void safe(String name, Runnable r) {
@@ -441,7 +457,9 @@ public class HookMain implements IXposedHookLoadPackage {
     private void installTencentSdkWatcher(final Context appContext) {
         if (tencentWatcherInstalled) return;
         tencentWatcherInstalled = true;
+        diagCtx = appContext.getApplicationContext();
         final ClassLoader appCl = appContext.getClassLoader();
+        dlog("watcher installed, proc=" + Application.getProcessName());
 
         // 主动加载已知类名：SDK 类若在监听安装前已加载，这里补挂
         String[] known = {
@@ -496,7 +514,7 @@ public class HookMain implements IXposedHookLoadPackage {
                         double[] c = readFromTmp();
                         if (c != null) {
                             p.setResult(c[0] + getDrift());
-                            Log.i(LT, "getLatitude -> " + p.getResult());
+                            dlog("getLatitude -> " + p.getResult());
                         }
                     }
                 }));
@@ -507,7 +525,7 @@ public class HookMain implements IXposedHookLoadPackage {
                         double[] c = readFromTmp();
                         if (c != null) {
                             p.setResult(c[1] + getDrift());
-                            Log.i(LT, "getLongitude -> " + p.getResult());
+                            dlog("getLongitude -> " + p.getResult());
                         }
                     }
                 }));
@@ -537,7 +555,7 @@ public class HookMain implements IXposedHookLoadPackage {
                     }));
         }
         XposedBridge.log(TAG + "TencentLocation hooked: " + clazz.getName());
-        Log.i(LT, "TencentLocation hooked: " + clazz.getName());
+        dlog("TencentLocation hooked: " + clazz.getName());
     }
 
     /** 字段级覆写腾讯定位对象的坐标（字段名按已知变体逐个尝试，全部容错） */
@@ -580,7 +598,7 @@ public class HookMain implements IXposedHookLoadPackage {
                 XposedBridge.hookAllMethods(clazz, n, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        Log.i(LT, "tencent." + n + "(" + argClasses(p.args) + ")");
+                        dlog("tencent." + n + "(" + argClasses(p.args) + ")");
                         for (Object arg : p.args) hookTencentListenerOnce(arg);
                     }
 
@@ -589,14 +607,14 @@ public class HookMain implements IXposedHookLoadPackage {
                         Object r = p.getResult();
                         if (r != null && r.getClass().getName().startsWith("com.tencent.map.geolocation")) {
                             overwriteTencentFields(r);
-                            Log.i(LT, "tencent." + n + " returned Tencent obj -> overwritten");
+                            dlog("tencent." + n + " returned Tencent obj -> overwritten");
                         }
                     }
                 });
             }
         });
         XposedBridge.log(TAG + "TencentLocationManager hooked: " + clazz.getName());
-        Log.i(LT, "TencentLocationManager hooked: " + clazz.getName());
+        dlog("TencentLocationManager hooked: " + clazz.getName());
     }
 
     /** 给 request 方法参数里带 onLocationChanged 的对象挂回调监听（微信自己的监听器类也覆盖） */
@@ -618,12 +636,12 @@ public class HookMain implements IXposedHookLoadPackage {
                             overwriteTencentFields(a);
                         }
                     }
-                    Log.i(LT, "onLocationChanged fired: " + lc.getName());
+                    dlog("onLocationChanged fired: " + lc.getName());
                 }
             });
-            Log.i(LT, "listener hooked: " + lc.getName());
+            dlog("listener hooked: " + lc.getName());
         } catch (Throwable t) {
-            Log.i(LT, "listener hook failed: " + t);
+            dlog("listener hook failed: " + t);
         }
     }
 
