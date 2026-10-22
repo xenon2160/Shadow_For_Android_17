@@ -492,16 +492,22 @@ public class HookMain implements IXposedHookLoadPackage {
     private void watchTencentClass(Class<?> clazz) {
         try {
             String name = clazz.getName();
-            if (!name.startsWith("com.tencent.map.geolocation")) return;
+            boolean tencent = name.startsWith("com.tencent.map.geolocation");
+            // 模糊定位（wx.getFuzzyLocation）兜底：凡类名带 FuzzyLocation 且有坐标 getter 的一律接管
+            boolean fuzzy = name.contains("FuzzyLocation");
+            if (!tencent && !fuzzy) return;
             if (!tencentHooked.add(clazz)) return;
             String simple = clazz.getSimpleName();
             if (simple.equals("TencentLocation")) {
                 patchTencentLocation(clazz);
             } else if (simple.equals("TencentLocationManager")) {
                 patchTencentManager(clazz);
+            } else if (fuzzy) {
+                dlog("fuzzy class caught: " + name);
+                patchTencentLocation(clazz); // 有 getLatitude 就 Hook，没有则 hookAllMethods 空转
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + "watchTencentClass failed: " + t);
+            dlog("watchTencentClass failed: " + t);
         }
     }
 
@@ -627,9 +633,18 @@ public class HookMain implements IXposedHookLoadPackage {
                 try {
                     f.setAccessible(true);
                     Class<?> ft = f.getType();
-                    if (ft == double.class || ft == Double.class) {
+                    } else if ((ft == double.class || ft == Double.class)) {
                         if (n.contains("lat")) { f.set(obj, lat); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lat); }
                         else if (n.contains("lon") || n.contains("lng")) { f.set(obj, lng); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lng); }
+                        else {
+                            // 占位字段兜底：u=-91.0/v=-181.0 是经纬度的非法默认值标记
+                            Object cur = f.get(obj);
+                            if (cur instanceof Double) {
+                                double dv = (Double) cur;
+                                if (dv > -91.6 && dv < -90.4) { f.set(obj, lat); dlog("set " + k.getSimpleName() + "." + f.getName() + " (lat slot) =" + lat); }
+                                else if (dv > -181.6 && dv < -180.4) { f.set(obj, lng); dlog("set " + k.getSimpleName() + "." + f.getName() + " (lng slot) =" + lng); }
+                            }
+                        }
                     } else if ((ft == float.class || ft == Float.class) && n.contains("accuracy")) {
                         f.set(obj, 5.0f + new Random().nextFloat() * 10);
                         dlog("set " + k.getSimpleName() + "." + f.getName() + " accuracy");
@@ -690,6 +705,25 @@ public class HookMain implements IXposedHookLoadPackage {
                 });
             }
         });
+        // 坐标系管道锁定：无论微信请求什么模式，SDK 输出一律按 GCJ-02 对待，
+        // 防止 WGS-84 模式下注入的火星坐标被二次换算（~500 米偏差）
+        safe("TencentLocationManager.setCoordinateType", () ->
+                XposedBridge.hookAllMethods(clazz, "setCoordinateType", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        if (readFromTmp() != null && p.args.length > 0 && p.args[0] instanceof Integer) {
+                            dlog("setCoordinateType requested=" + p.args[0] + " -> force GCJ02(1)");
+                            p.args[0] = 1;
+                        }
+                    }
+                }));
+        safe("TencentLocationManager.getCoordinateType", () ->
+                XposedBridge.hookAllMethods(clazz, "getCoordinateType", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        if (readFromTmp() != null) p.setResult(1);
+                    }
+                }));
         XposedBridge.log(TAG + "TencentLocationManager hooked: " + clazz.getName());
         dlog("TencentLocationManager hooked: " + clazz.getName());
     }
