@@ -14,6 +14,7 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.SystemClock;
+import android.util.Log;
 import android.telephony.CellInfo;
 import android.telephony.NeighboringCellInfo;
 import android.telephony.PhoneStateListener;
@@ -63,6 +64,8 @@ public class HookMain implements IXposedHookLoadPackage {
 
     private static final String FILE_PATH = "/data/local/tmp/irest_loc.conf";
     private static final String TAG = "[Shadow] ";
+    // 诊断日志 tag（直接进 logcat，adb logcat -s ShadowTP 可实时观察小程序定位链路）
+    private static final String LT = "ShadowTP";
 
     // 缓存当前的指纹信息 (默认为保底值)
     private static String cachedMac = "00:11:22:33:44:55";
@@ -483,14 +486,18 @@ public class HookMain implements IXposedHookLoadPackage {
         }
     }
 
-    /** 类级别 Hook 腾讯定位对象的坐标出口：所有实例生效，与 SDK 内部链路无关 */
+    /** 类级别 Hook 腾讯定位对象的坐标出口：getter + 构造器/setter 字段级覆写，
+     *  覆盖"读 getter"和"直接读字段"两类消费链路 */
     private void patchTencentLocation(final Class<?> clazz) {
         safe("TencentLocation.getLatitude", () ->
                 XposedBridge.hookAllMethods(clazz, "getLatitude", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                         double[] c = readFromTmp();
-                        if (c != null) p.setResult(c[0] + getDrift());
+                        if (c != null) {
+                            p.setResult(c[0] + getDrift());
+                            Log.i(LT, "getLatitude -> " + p.getResult());
+                        }
                     }
                 }));
         safe("TencentLocation.getLongitude", () ->
@@ -498,7 +505,10 @@ public class HookMain implements IXposedHookLoadPackage {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                         double[] c = readFromTmp();
-                        if (c != null) p.setResult(c[1] + getDrift());
+                        if (c != null) {
+                            p.setResult(c[1] + getDrift());
+                            Log.i(LT, "getLongitude -> " + p.getResult());
+                        }
                     }
                 }));
         safe("TencentLocation.getProvider", () ->
@@ -508,10 +518,43 @@ public class HookMain implements IXposedHookLoadPackage {
                         if (readFromTmp() != null) p.setResult("gps");
                     }
                 }));
+        // 字段级覆写：对象刚构造出来就把 mLatitude/mLongitude 改成假坐标，
+        // 后续任何直接读字段的内部链路（微信把结果转给小程序 JS 的桥接代码）都拿到假值
+        safe("TencentLocation.<init>(field overwrite)", () ->
+                XposedBridge.hookAllConstructors(clazz, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        overwriteTencentFields(p.thisObject);
+                    }
+                }));
+        for (String s : new String[]{"setLatitude", "setLongitude", "setLat", "setLng"}) {
+            safe("TencentLocation." + s + "(field overwrite)", () ->
+                    XposedBridge.hookAllMethods(clazz, s, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                            overwriteTencentFields(p.thisObject);
+                        }
+                    }));
+        }
         XposedBridge.log(TAG + "TencentLocation hooked: " + clazz.getName());
+        Log.i(LT, "TencentLocation hooked: " + clazz.getName());
     }
 
-    /** Hook 腾讯定位管理器：顺藤摸瓜补挂代理类（字段可能不存在，逐个容错） */
+    /** 字段级覆写腾讯定位对象的坐标（字段名按已知变体逐个尝试，全部容错） */
+    private void overwriteTencentFields(Object loc) {
+        if (loc == null) return;
+        double[] c = readFromTmp();
+        if (c == null) return;
+        double lat = c[0] + getDrift(), lng = c[1] + getDrift();
+        for (String f : new String[]{"mLatitude", "latitude", "mLat"}) {
+            try { XposedHelpers.setDoubleField(loc, f, lat); } catch (Throwable ignored) {}
+        }
+        for (String f : new String[]{"mLongitude", "longitude", "mLng", "mLon"}) {
+            try { XposedHelpers.setDoubleField(loc, f, lng); } catch (Throwable ignored) {}
+        }
+    }
+
+    /** Hook 腾讯定位管理器：顺藤摸瓜补挂代理类 + 拦截 request/get 系列方法里的监听器 */
     private void patchTencentManager(Class<?> clazz) {
         safe("TencentLocationManager.getInstance", () ->
                 XposedBridge.hookAllMethods(clazz, "getInstance", new XC_MethodHook() {
@@ -528,7 +571,70 @@ public class HookMain implements IXposedHookLoadPackage {
                         }
                     }
                 }));
+        // 通杀 request*/get* 系列：日志记录调用了哪条路，参数里的监听器自动挂 onLocationChanged，
+        // 返回值若是腾讯定位对象立即字段级覆写
+        safe("TencentLocationManager request/get hooks", () -> {
+            for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
+                final String n = m.getName();
+                if (!n.startsWith("request") && !n.startsWith("get")) continue;
+                XposedBridge.hookAllMethods(clazz, n, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        Log.i(LT, "tencent." + n + "(" + argClasses(p.args) + ")");
+                        for (Object arg : p.args) hookTencentListenerOnce(arg);
+                    }
+
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        Object r = p.getResult();
+                        if (r != null && r.getClass().getName().startsWith("com.tencent.map.geolocation")) {
+                            overwriteTencentFields(r);
+                            Log.i(LT, "tencent." + n + " returned Tencent obj -> overwritten");
+                        }
+                    }
+                });
+            }
+        });
         XposedBridge.log(TAG + "TencentLocationManager hooked: " + clazz.getName());
+        Log.i(LT, "TencentLocationManager hooked: " + clazz.getName());
+    }
+
+    /** 给 request 方法参数里带 onLocationChanged 的对象挂回调监听（微信自己的监听器类也覆盖） */
+    private void hookTencentListenerOnce(Object arg) {
+        if (arg == null) return;
+        Class<?> lc = arg.getClass();
+        try {
+            boolean has = false;
+            for (java.lang.reflect.Method m : lc.getDeclaredMethods()) {
+                if (m.getName().equals("onLocationChanged")) { has = true; break; }
+            }
+            if (!has) return;
+            if (!tencentHooked.add(lc)) return;
+            XposedBridge.hookAllMethods(lc, "onLocationChanged", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                    for (Object a : p.args) {
+                        if (a != null && a.getClass().getName().startsWith("com.tencent.map.geolocation")) {
+                            overwriteTencentFields(a);
+                        }
+                    }
+                    Log.i(LT, "onLocationChanged fired: " + lc.getName());
+                }
+            });
+            Log.i(LT, "listener hooked: " + lc.getName());
+        } catch (Throwable t) {
+            Log.i(LT, "listener hook failed: " + t);
+        }
+    }
+
+    /** 参数类名拼接（诊断日志用） */
+    private String argClasses(Object[] args) {
+        StringBuilder sb = new StringBuilder();
+        for (Object a : args) {
+            if (sb.length() > 0) sb.append(",");
+            sb.append(a == null ? "null" : a.getClass().getSimpleName());
+        }
+        return sb.toString();
     }
 
     private void applyLocationFix(Location loc) {
