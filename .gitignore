@@ -23,3 +23,6 @@ lspd-logs/
 # IDE 本地配置（可能含设备序列号/本机路径，勿提交）
 /.idea/
 /.vscode/
+
+# 第三方项目（本地参考用，勿提交）
+HookWXMAppLocation-master/
