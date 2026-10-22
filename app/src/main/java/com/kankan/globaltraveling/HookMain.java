@@ -28,6 +28,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
@@ -542,7 +543,7 @@ public class HookMain implements IXposedHookLoadPackage {
                 XposedBridge.hookAllConstructors(clazz, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        overwriteTencentFields(p.thisObject);
+                        overwriteTencentFields(p.thisObject, "ctor");
                     }
                 }));
         for (String s : new String[]{"setLatitude", "setLongitude", "setLat", "setLng"}) {
@@ -550,7 +551,7 @@ public class HookMain implements IXposedHookLoadPackage {
                     XposedBridge.hookAllMethods(clazz, s, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                            overwriteTencentFields(p.thisObject);
+                            overwriteTencentFields(p.thisObject, "set");
                         }
                     }));
         }
@@ -558,17 +559,56 @@ public class HookMain implements IXposedHookLoadPackage {
         dlog("TencentLocation hooked: " + clazz.getName());
     }
 
-    /** 字段级覆写腾讯定位对象的坐标（字段名按已知变体逐个尝试，全部容错） */
-    private void overwriteTencentFields(Object loc) {
+    /** 已 dump 过类结构的（防日志刷屏） */
+    private final Set<String> dumpedTencentClasses =
+            Collections.synchronizedSet(new HashSet<>());
+
+    /** 运行时自省 + 字段级覆写：dump 出对象真实类/字段/值（每次类只 dump 一次），
+     *  再按字段名（lat/lon）启发式覆写——壳类无字段，真实数据在运行时子类里，只能运行时看 */
+    private void overwriteTencentFields(Object loc, String where) {
         if (loc == null) return;
-        double[] c = readFromTmp();
-        if (c == null) return;
-        double lat = c[0] + getDrift(), lng = c[1] + getDrift();
-        for (String f : new String[]{"mLatitude", "latitude", "mLat"}) {
-            try { XposedHelpers.setDoubleField(loc, f, lat); } catch (Throwable ignored) {}
-        }
-        for (String f : new String[]{"mLongitude", "longitude", "mLng", "mLon"}) {
-            try { XposedHelpers.setDoubleField(loc, f, lng); } catch (Throwable ignored) {}
+        double[] cfg = readFromTmp();
+        try {
+            Class<?> c = loc.getClass();
+            if (dumpedTencentClasses.add(c.getName())) {
+                StringBuilder sb = new StringBuilder("loc@" + where + " class=" + c.getName());
+                Class<?> k = c;
+                int lv = 0;
+                while (k != null && lv++ < 5 && !k.getName().startsWith("java.")) {
+                    sb.append(" | ").append(k.getName()).append("{");
+                    for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                        sb.append(f.getName()).append(":").append(f.getType().getSimpleName());
+                        try {
+                            f.setAccessible(true);
+                            sb.append("=").append(f.get(loc));
+                        } catch (Throwable ignored) {}
+                        sb.append(", ");
+                    }
+                    sb.append("}");
+                    k = k.getSuperclass();
+                }
+                dlog(sb.toString());
+            }
+            if (cfg == null) return;
+            // 按字段名启发式覆写（lat / lon / lng），逐字段容错
+            double lat = cfg[0] + getDrift(), lng = cfg[1] + getDrift();
+            Class<?> k = c;
+            int lv = 0;
+            while (k != null && lv++ < 5 && !k.getName().startsWith("java.")) {
+                for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                    String n = f.getName().toLowerCase();
+                    boolean isD = f.getType() == double.class || f.getType() == Double.class;
+                    if (!isD) continue;
+                    try {
+                        f.setAccessible(true);
+                        if (n.contains("lat")) { f.set(loc, lat); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lat); }
+                        else if (n.contains("lon") || n.contains("lng")) { f.set(loc, lng); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lng); }
+                    } catch (Throwable ignored) {}
+                }
+                k = k.getSuperclass();
+            }
+        } catch (Throwable t) {
+            dlog("dump/overwrite fail: " + t);
         }
     }
 
@@ -606,7 +646,7 @@ public class HookMain implements IXposedHookLoadPackage {
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                         Object r = p.getResult();
                         if (r != null && r.getClass().getName().startsWith("com.tencent.map.geolocation")) {
-                            overwriteTencentFields(r);
+                            overwriteTencentFields(r, "mgr." + n);
                             dlog("tencent." + n + " returned Tencent obj -> overwritten");
                         }
                     }
@@ -632,9 +672,18 @@ public class HookMain implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                     for (Object a : p.args) {
-                        if (a != null && a.getClass().getName().startsWith("com.tencent.map.geolocation")) {
-                            overwriteTencentFields(a);
-                        }
+                        if (a == null) continue;
+                        // 具体类若重写了 getter（壳类的运行时子类），现场补挂
+                        try {
+                            boolean overrides = false;
+                            for (java.lang.reflect.Method m : a.getClass().getDeclaredMethods()) {
+                                if (m.getName().equals("getLatitude") || m.getName().equals("getLongitude")) { overrides = true; break; }
+                            }
+                            if (overrides && tencentHooked.add(a.getClass())) {
+                                patchTencentLocation(a.getClass());
+                            }
+                        } catch (Throwable ignored) {}
+                        overwriteTencentFields(a, "listener");
                     }
                     dlog("onLocationChanged fired: " + lc.getName());
                 }
