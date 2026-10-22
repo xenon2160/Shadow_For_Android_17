@@ -145,6 +145,10 @@
     方法签名**（第三方模块 HookWXMAppLocation 依赖 `mProxyClass` 等内部链路，SDK 一更新
     即静默失效——这正是它"装了不生效"的原因）。同时覆盖微信、企业微信、QQ。
 *   **无需再安装 HookWXMAppLocation**：装了 2.1 后建议卸载它，避免重复 Hook。
+*   **2.1.1 加强**：覆盖连续定位（`requestLocationUpdates` + 监听器回调，打卡/导航类
+    小程序常用）、**字段级覆写**（`mLatitude`/`mLongitude`，堵死"直接读字段不走
+    getter"的内部链路）；新增 `ShadowTP` logcat 诊断日志，便于排查个别小程序的
+    特殊取位置路径。
 
 ---
 
