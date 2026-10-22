@@ -135,6 +135,19 @@
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
 
+### 🆕 2.1 版本：微信小程序定位劫持
+
+*   **小程序定位生效**：微信小程序的 `wx.getLocation` 走微信内置腾讯定位 SDK
+    （`com.tencent.map.geolocation`），**不经过系统 LocationManager**，此前无论怎么
+    模拟小程序都显示真实位置。2.1 直接在该 SDK 的坐标出口类级别 Hook
+    （`getLatitude`/`getLongitude` → 系统模拟坐标），小程序定位与主程序定位一并生效。
+*   **实现更稳健**：类加载监听 + 按包前缀/简单类名识别，**不依赖 SDK 内部字段名与
+    方法签名**（第三方模块 HookWXMAppLocation 依赖 `mProxyClass` 等内部链路，SDK 一更新
+    即静默失效——这正是它"装了不生效"的原因）。同时覆盖微信、企业微信、QQ。
+*   **无需再安装 HookWXMAppLocation**：装了 2.1 后建议卸载它，避免重复 Hook。
+
+---
+
 ### 🆕 2.0 版本：搜索全面适配国内网络（版本号说明：原作者已发布 1.2，本 Fork 从 1.0 重构，故跳至 2.0）
 
 *   **实测确认：地图底图不填任何 Key 也能正常显示**——Key 的实际作用集中于搜索。

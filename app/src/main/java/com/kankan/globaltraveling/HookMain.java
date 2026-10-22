@@ -1,5 +1,7 @@
 package com.kankan.globaltraveling;
 
+import android.app.Application;
+import android.content.Context;
 import android.location.GnssStatus;
 import android.location.Location;
 import android.location.LocationListener;
@@ -51,6 +53,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  * 4. 补充 Location.isMock()（Android 12+ 新检测途径）的屏蔽。
  * 5. requestLocationUpdates 使用 instanceof 判断监听器（旧版按类名 contains 判断，
  *    Lambda/函数式实现会漏判），并对每个监听器只 Hook 一次，防止重复挂载。
+ * 6. 微信小程序定位劫持：小程序的 wx.getLocation 走微信内置腾讯定位 SDK
+ *    （com.tencent.map.geolocation），不经过系统 LocationManager，单独用类加载监听
+ *    + 类级别 Hook SDK 坐标出口（getLatitude/getLongitude）重定向到系统模拟坐标，
+ *    不依赖 SDK 内部字段名/方法签名，SDK 更新后依然稳定（取代第三方
+ *    HookWXMAppLocation 模块的脆弱内部链路 Hook）。
  */
 public class HookMain implements IXposedHookLoadPackage {
 
@@ -70,6 +77,15 @@ public class HookMain implements IXposedHookLoadPackage {
             Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 
     private boolean loggedFileMissing = false;
+
+    // 小程序定位劫持：内置腾讯定位 SDK 的宿主 App（小程序定位发生在这些进程里）
+    private static final java.util.List<String> TENCENT_SDK_PKGS =
+            java.util.Arrays.asList("com.tencent.mm", "com.tencent.wework", "com.tencent.mobileqq");
+
+    // 已处理过的腾讯 SDK 类，防止重复 Hook
+    private final Set<Class<?>> tencentHooked =
+            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+    private volatile boolean tencentWatcherInstalled = false;
 
     /** 所有 Hook 统一走这里：单个 Hook 失败只记日志，不影响其余 Hook（Android 17 兼容关键） */
     private void safe(String name, Runnable r) {
@@ -329,6 +345,20 @@ public class HookMain implements IXposedHookLoadPackage {
                     }));
         }
 
+        // ==========================================
+        // 7. 小程序定位劫持（微信小程序的 wx.getLocation 走内置腾讯定位 SDK，
+        //    不经系统 LocationManager，需要把 SDK 坐标出口重定向到系统模拟坐标）
+        // ==========================================
+        if (TENCENT_SDK_PKGS.contains(lpparam.packageName)) {
+            safe("Application.attach(TencentSDK watcher)", () ->
+                    XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            installTencentSdkWatcher((Context) param.args[0]);
+                        }
+                    }));
+        }
+
         try {
             Class<?> amap = XposedHelpers.findClass("com.amap.api.location.AMapLocation", lpparam.classLoader);
             hookSDK(amap, getterHook);
@@ -400,6 +430,105 @@ public class HookMain implements IXposedHookLoadPackage {
         try { XposedHelpers.findAndHookMethod(clazz, "getLatitude", hook); } catch (Throwable t) {}
         try { XposedHelpers.findAndHookMethod(clazz, "getLongitude", hook); } catch (Throwable t) {}
         try { XposedHelpers.findAndHookMethod(clazz, "getAccuracy", hook); } catch (Throwable t) {}
+    }
+
+    // ==================== 小程序定位劫持（腾讯定位 SDK） ====================
+
+    /** 安装腾讯定位 SDK 类加载监听（每进程一次），并主动预载已知类名 */
+    private void installTencentSdkWatcher(final Context appContext) {
+        if (tencentWatcherInstalled) return;
+        tencentWatcherInstalled = true;
+        final ClassLoader appCl = appContext.getClassLoader();
+
+        // 主动加载已知类名：SDK 类若在监听安装前已加载，这里补挂
+        String[] known = {
+                "com.tencent.map.geolocation.sapp.TencentLocation",
+                "com.tencent.map.geolocation.sapp.TencentLocationManager",
+                "com.tencent.map.geolocation.TencentLocation",
+                "com.tencent.map.geolocation.TencentLocationManager",
+        };
+        for (String cn : known) {
+            try { watchTencentClass(appCl.loadClass(cn)); } catch (Throwable ignored) {}
+        }
+
+        // 类加载监听：SDK 类名/包名未来怎么变，只要仍带 geolocation 包前缀即可自动捕获
+        XC_MethodHook loaderHook = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                Object r = p.getResult();
+                if (r instanceof Class) watchTencentClass((Class<?>) r);
+            }
+        };
+        safe("ClassLoader.loadClass(watch Tencent)", () -> {
+            XposedHelpers.findAndHookMethod(ClassLoader.class, "loadClass", String.class, loaderHook);
+            XposedHelpers.findAndHookMethod(ClassLoader.class, "loadClass", String.class, boolean.class, loaderHook);
+        });
+        XposedBridge.log(TAG + "Tencent SDK watcher installed (小程序定位劫持已就绪)");
+    }
+
+    /** 判断并处理腾讯定位 SDK 类：只认包前缀，按简单类名分派（不依赖完整类名） */
+    private void watchTencentClass(Class<?> clazz) {
+        try {
+            String name = clazz.getName();
+            if (!name.startsWith("com.tencent.map.geolocation")) return;
+            if (!tencentHooked.add(clazz)) return;
+            String simple = clazz.getSimpleName();
+            if (simple.equals("TencentLocation")) {
+                patchTencentLocation(clazz);
+            } else if (simple.equals("TencentLocationManager")) {
+                patchTencentManager(clazz);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + "watchTencentClass failed: " + t);
+        }
+    }
+
+    /** 类级别 Hook 腾讯定位对象的坐标出口：所有实例生效，与 SDK 内部链路无关 */
+    private void patchTencentLocation(final Class<?> clazz) {
+        safe("TencentLocation.getLatitude", () ->
+                XposedBridge.hookAllMethods(clazz, "getLatitude", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        double[] c = readFromTmp();
+                        if (c != null) p.setResult(c[0] + getDrift());
+                    }
+                }));
+        safe("TencentLocation.getLongitude", () ->
+                XposedBridge.hookAllMethods(clazz, "getLongitude", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        double[] c = readFromTmp();
+                        if (c != null) p.setResult(c[1] + getDrift());
+                    }
+                }));
+        safe("TencentLocation.getProvider", () ->
+                XposedBridge.hookAllMethods(clazz, "getProvider", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        if (readFromTmp() != null) p.setResult("gps");
+                    }
+                }));
+        XposedBridge.log(TAG + "TencentLocation hooked: " + clazz.getName());
+    }
+
+    /** Hook 腾讯定位管理器：顺藤摸瓜补挂代理类（字段可能不存在，逐个容错） */
+    private void patchTencentManager(Class<?> clazz) {
+        safe("TencentLocationManager.getInstance", () ->
+                XposedBridge.hookAllMethods(clazz, "getInstance", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        Object mgr = p.getResult();
+                        if (mgr == null) return;
+                        for (String f : new String[]{"mProxyClass", "mProxyObj", "mProxy"}) {
+                            try {
+                                Object v = XposedHelpers.getObjectField(mgr, f);
+                                if (v instanceof Class) watchTencentClass((Class<?>) v);
+                                else if (v != null) watchTencentClass(v.getClass());
+                            } catch (Throwable ignored) {}
+                        }
+                    }
+                }));
+        XposedBridge.log(TAG + "TencentLocationManager hooked: " + clazz.getName());
     }
 
     private void applyLocationFix(Location loc) {
