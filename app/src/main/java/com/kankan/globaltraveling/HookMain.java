@@ -633,7 +633,7 @@ public class HookMain implements IXposedHookLoadPackage {
                 try {
                     f.setAccessible(true);
                     Class<?> ft = f.getType();
-                    } else if ((ft == double.class || ft == Double.class)) {
+                    if ((ft == double.class || ft == Double.class)) {
                         if (n.contains("lat")) { f.set(obj, lat); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lat); }
                         else if (n.contains("lon") || n.contains("lng")) { f.set(obj, lng); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lng); }
                         else {
