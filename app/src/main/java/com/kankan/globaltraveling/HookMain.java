@@ -537,6 +537,23 @@ public class HookMain implements IXposedHookLoadPackage {
                         if (readFromTmp() != null) p.setResult("gps");
                     }
                 }));
+        // 精度假装成真实 GPS 水平（accuracy=0 会被服务端当作不可信坐标拒绝）
+        safe("TencentLocation.getAccuracy", () ->
+                XposedBridge.hookAllMethods(clazz, "getAccuracy", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        if (readFromTmp() != null) p.setResult(5.0f + new Random().nextFloat() * 10);
+                    }
+                }));
+        // 坐标系类型固定为 GCJ-02（注入的坐标来自高德地图即火星坐标；
+        // 若对象谎报 WGS84，小程序侧换算会引入 ~500 米系统性偏差 → "距离过远"）
+        safe("TencentLocation.getCoordinateType", () ->
+                XposedBridge.hookAllMethods(clazz, "getCoordinateType", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        if (readFromTmp() != null) p.setResult(1); // COORDINATE_TYPE_GCJ02
+                    }
+                }));
         // 字段级覆写：对象刚构造出来就把 mLatitude/mLongitude 改成假坐标，
         // 后续任何直接读字段的内部链路（微信把结果转给小程序 JS 的桥接代码）都拿到假值
         safe("TencentLocation.<init>(field overwrite)", () ->
@@ -590,25 +607,45 @@ public class HookMain implements IXposedHookLoadPackage {
                 dlog(sb.toString());
             }
             if (cfg == null) return;
-            // 按字段名启发式覆写（lat / lon / lng），逐字段容错
+            // 按字段名启发式覆写（lat / lon / lng），逐字段容错；
+            // 递归一层嵌套对象（ez 包着 TxLocation，经纬度/精度在嵌套体里）
             double lat = cfg[0] + getDrift(), lng = cfg[1] + getDrift();
-            Class<?> k = c;
-            int lv = 0;
-            while (k != null && lv++ < 5 && !k.getName().startsWith("java.")) {
-                for (java.lang.reflect.Field f : k.getDeclaredFields()) {
-                    String n = f.getName().toLowerCase();
-                    boolean isD = f.getType() == double.class || f.getType() == Double.class;
-                    if (!isD) continue;
-                    try {
-                        f.setAccessible(true);
-                        if (n.contains("lat")) { f.set(loc, lat); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lat); }
-                        else if (n.contains("lon") || n.contains("lng")) { f.set(loc, lng); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lng); }
-                    } catch (Throwable ignored) {}
-                }
-                k = k.getSuperclass();
-            }
+            overwriteInObject(loc, lat, lng, 0);
         } catch (Throwable t) {
             dlog("dump/overwrite fail: " + t);
+        }
+    }
+
+    /** 在对象及其嵌套对象（同 SDK 包内，深度≤2）里按字段名覆写 lat/lon/accuracy */
+    private void overwriteInObject(Object obj, double lat, double lng, int depth) {
+        if (obj == null || depth > 2) return;
+        Class<?> k = obj.getClass();
+        int lv = 0;
+        while (k != null && lv++ < 5 && !k.getName().startsWith("java.")) {
+            for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                String n = f.getName().toLowerCase();
+                try {
+                    f.setAccessible(true);
+                    Class<?> ft = f.getType();
+                    if (ft == double.class || ft == Double.class) {
+                        if (n.contains("lat")) { f.set(obj, lat); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lat); }
+                        else if (n.contains("lon") || n.contains("lng")) { f.set(obj, lng); dlog("set " + k.getSimpleName() + "." + f.getName() + "=" + lng); }
+                    } else if ((ft == float.class || ft == Float.class) && n.contains("accuracy")) {
+                        f.set(obj, 5.0f + new Random().nextFloat() * 10);
+                        dlog("set " + k.getSimpleName() + "." + f.getName() + " accuracy");
+                    } else if ((ft == int.class || ft == Integer.class) && n.contains("coordinatetype")) {
+                        f.set(obj, 1); // GCJ02
+                    } else if (!ft.isPrimitive() && ft != String.class && depth < 2) {
+                        // 递归嵌套对象（限制 SDK 包内，防误伤）
+                        Object nested = f.get(obj);
+                        if (nested != null && nested.getClass().getName().startsWith("c.t.m.")
+                                || nested != null && nested.getClass().getName().startsWith("com.tencent.map")) {
+                            overwriteInObject(nested, lat, lng, depth + 1);
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
+            k = k.getSuperclass();
         }
     }
 
