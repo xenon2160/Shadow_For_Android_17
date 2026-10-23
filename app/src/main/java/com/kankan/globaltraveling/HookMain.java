@@ -430,6 +430,21 @@ public class HookMain implements IXposedHookLoadPackage {
                 }
                 dlog("LocationManager diagnostics installed (proc=" + Application.getProcessName() + ")");
             });
+
+            // 网络层侦查：记录小程序/微信发出的 URL（打卡时刻访问了哪些服务器一目了然）
+            safe("Network URL diagnostics", () -> {
+                XposedHelpers.findAndHookConstructor(java.net.URL.class, String.class, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        Object u = p.args[0];
+                        if (u instanceof String) {
+                            String s = (String) u;
+                            if (s.startsWith("http")) dlog("URL " + s);
+                        }
+                    }
+                });
+                dlog("Network URL diagnostics installed (proc=" + Application.getProcessName() + ")");
+            });
         }
 
 
@@ -710,6 +725,14 @@ public class HookMain implements IXposedHookLoadPackage {
                         b.putDouble(key, lng);
                         dlog("bundle " + key + " -> " + lng);
                     }
+                } else if (key.equals("locationId") || key.equals("locationId".toLowerCase())) {
+                    // 腾讯 LBS 服务端位置索引：打卡服务器可凭它向腾讯反查真实位置 → 清空断链
+                    b.putString(key, "");
+                    dlog("bundle locationId cleared");
+                } else if (key.equals("KEY_IS_HIGH_ACCURACY")) {
+                    // 高精模式标记：置 false，降低服务端走腾讯 LBS 校验的概率
+                    b.putBoolean(key, false);
+                    dlog("bundle high_accuracy -> false");
                 }
             } catch (Throwable ignored) {}
         }
