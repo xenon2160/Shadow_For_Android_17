@@ -370,6 +370,10 @@ public class HookMain implements IXposedHookLoadPackage {
         // 7. 小程序定位劫持（微信小程序的 wx.getLocation 走内置腾讯定位 SDK，
         //    不经系统 LocationManager，需要把 SDK 坐标出口重定向到系统模拟坐标）
         // ==========================================
+        // ==========================================
+        // 8. 诊断：系统定位调用全记录（揪出绕过腾讯 SDK 的取位置路径，
+        //    如小程序自带原生插件直调 LocationManager）
+        // ==========================================
         if (TENCENT_SDK_PKGS.contains(lpparam.packageName)) {
             safe("Application.attach(TencentSDK watcher)", () ->
                     XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
@@ -378,7 +382,30 @@ public class HookMain implements IXposedHookLoadPackage {
                             installTencentSdkWatcher((Context) param.args[0]);
                         }
                     }));
+
+            safe("LocationManager diagnostics", () -> {
+                for (java.lang.reflect.Method m : LocationManager.class.getDeclaredMethods()) {
+                    final String mn = m.getName();
+                    if (!mn.contains("Location") && !mn.contains("Gnss") && !mn.contains("location")) continue;
+                    XposedBridge.hookAllMethods(LocationManager.class, mn, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                            Object r = p.getResult();
+                            String rv = "";
+                            if (r instanceof Location) {
+                                Location l = (Location) r;
+                                try { rv = " -> " + l.getLatitude() + "," + l.getLongitude(); } catch (Throwable ignored) {}
+                            } else if (r != null) {
+                                rv = " -> " + r.getClass().getSimpleName();
+                            }
+                            dlog("LM." + mn + "(" + argClasses(p.args) + ")" + rv);
+                        }
+                    });
+                }
+                dlog("LocationManager diagnostics installed (proc=" + Application.getProcessName() + ")");
+            });
         }
+
 
         try {
             Class<?> amap = XposedHelpers.findClass("com.amap.api.location.AMapLocation", lpparam.classLoader);
