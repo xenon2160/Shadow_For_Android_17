@@ -22,7 +22,9 @@ import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
 import android.bluetooth.BluetoothAdapter;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Constructor;
@@ -310,13 +312,17 @@ public class HookMain implements IXposedHookLoadPackage {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                                 if (readFromTmp() != null) {
-                                    // 模拟开启：基站列表清空（后续可替换为教学楼指纹回放）
-                                    param.setResult(new ArrayList<CellInfo>());
+                                    // 模拟开启：返回教学楼基站指纹（配置文件存在时回放，否则清空）
+                                    List<Object> fakes = loadFakeCells();
+                                    param.setResult(fakes != null ? new ArrayList<>(fakes) : new ArrayList<CellInfo>());
                                 } else {
-                                    // 模拟关闭：放行真实数据并记录（采集目标位置基站指纹用）
+                                    // 模拟关闭：放行真实数据 + 反射记录完整指纹（绕过 toString 屏蔽）
                                     Object r = param.getResult();
                                     if (r instanceof List) {
-                                        for (Object ci : (List<?>) r) dlog("CELL " + ci);
+                                        for (Object ci : (List<?>) r) {
+                                            dlog("CELL " + ci);
+                                            dlogCellDetail(ci);
+                                        }
                                     }
                                 }
                             }
@@ -957,6 +963,105 @@ public class HookMain implements IXposedHookLoadPackage {
         return sb.toString();
     }
 
+    /** 反射直读 CellInfo 的小区标识（HyperOS 屏蔽了 toString 中的 NCI/TAC/PCI，字段本身必须保留给系统用） */
+    private void dlogCellDetail(Object ci) {
+        try {
+            StringBuilder sb = new StringBuilder("CELLX ");
+            sb.append(ci.getClass().getSimpleName()).append(" ");
+            for (java.lang.reflect.Method m : ci.getClass().getMethods()) {
+                if (m.getName().equals("getCellIdentity") && m.getParameterCount() == 0) {
+                    Object id = m.invoke(ci);
+                    if (id == null) break;
+                    sb.append("id=").append(id.getClass().getSimpleName()).append("{");
+                    for (java.lang.reflect.Field f : id.getClass().getDeclaredFields()) {
+                        Class<?> ft = f.getType();
+                        if (!ft.isPrimitive() && ft != String.class) continue;
+                        try {
+                            f.setAccessible(true);
+                            sb.append(f.getName()).append("=").append(f.get(id)).append(" ");
+                        } catch (Throwable ignored) {}
+                    }
+                    sb.append("}");
+                    break;
+                }
+            }
+            dlog(sb.toString());
+        } catch (Throwable t) {
+            dlog("cellX dump fail: " + t);
+        }
+    }
+
+    /** 指纹回放缓存 */
+    private static volatile List<Object> fakeCellsCache = null;
+    private static volatile long fakeCellsCacheTime = 0;
+
+    /** 从 /data/local/tmp/irest_cell.conf 加载教学楼基站指纹并构造 CellInfoNr 列表
+     *  格式：每行 mcc,mnc,nci,pci,tac,nrarfcn（教学楼采集所得） */
+    @SuppressWarnings("unchecked")
+    private List<Object> loadFakeCells() {
+        try {
+            long now = System.currentTimeMillis();
+            if (fakeCellsCache != null && now - fakeCellsCacheTime < 30000) return fakeCellsCache;
+            fakeCellsCacheTime = now;
+            File file = new File("/data/local/tmp/irest_cell.conf");
+            if (!file.exists() || !file.canRead()) { fakeCellsCache = null; return null; }
+            List<Object> result = new ArrayList<>();
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String[] p = line.split(",");
+                if (p.length < 6) continue;
+                try {
+                    int mcc = Integer.parseInt(p[0].trim());
+                    int mnc = Integer.parseInt(p[1].trim());
+                    long nci = Long.parseLong(p[2].trim());
+                    int pci = Integer.parseInt(p[3].trim());
+                    int tac = Integer.parseInt(p[4].trim());
+                    int nrarfcn = Integer.parseInt(p[5].trim());
+                    Object id = Class.forName("android.telephony.CellIdentityNr")
+                            .getConstructor(int.class, int.class, long.class, int.class, int.class,
+                                    int[].class, int[].class, int.class)
+                            .newInstance(mcc, mnc, nci, pci, tac, null, null, nrarfcn);
+                    Object sig = Class.forName("android.telephony.CellSignalStrengthNr")
+                            .getConstructor().newInstance();
+                    // 信号强度伪装成正常驻网水平（与教学楼采集值一致）
+                    for (java.lang.reflect.Field f : sig.getClass().getDeclaredFields()) {
+                        String fn = f.getName().toLowerCase();
+                        try {
+                            if (!f.getType().isPrimitive()) continue;
+                            f.setAccessible(true);
+                            if (fn.contains("ssrsrp")) f.setInt(sig, -92);
+                            else if (fn.contains("ssrsrq")) f.setInt(sig, -14);
+                            else if (fn.contains("sssinr")) f.setInt(sig, -4);
+                            else if (fn.equals("level")) f.setInt(sig, 2);
+                        } catch (Throwable ignored) {}
+                    }
+                    Object cell = Class.forName("android.telephony.CellInfoNr")
+                            .getConstructor(Class.forName("android.telephony.CellIdentityNr"),
+                                    Class.forName("android.telephony.CellSignalStrengthNr"))
+                            .newInstance(id, sig);
+                    try { // 注册状态标记为驻网
+                        java.lang.reflect.Field rf = cell.getClass().getSuperclass().getDeclaredField("mRegistered");
+                        rf.setAccessible(true);
+                        rf.setBoolean(cell, true);
+                    } catch (Throwable ignored) {}
+                    result.add(cell);
+                } catch (Throwable t) {
+                    dlog("fake cell construct fail: " + t);
+                }
+            }
+            reader.close();
+            fakeCellsCache = result.isEmpty() ? null : result;
+            if (fakeCellsCache != null) dlog("fake cells loaded: " + result.size());
+            return fakeCellsCache;
+        } catch (Throwable t) {
+            dlog("loadFakeCells fail: " + t);
+            return null;
+        }
+    }
+
     /** 掐掉 TelephonyCallback 中泄露位置的回调；模拟关闭时放行真实数据并记录（采集基站指纹） */
     private void hookTelephonyCallbackOnce(Object cb) {
         try {
@@ -970,16 +1075,26 @@ public class HookMain implements IXposedHookLoadPackage {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                                 if (readFromTmp() != null) {
-                                    // 模拟开启：吞掉真实基站推送（后续可替换为教学楼指纹回放）
+                                    // 模拟开启：替换为教学楼基站指纹（无指纹则清空）
                                     if (mn.equals("onCellInfoUpdated") && p.args.length > 0 && p.args[0] instanceof List) {
-                                        ((List<?>) p.args[0]).clear();
+                                        List<Object> fakes = loadFakeCells();
+                                        List<?> orig = (List<?>) p.args[0];
+                                        orig.clear();
+                                        if (fakes != null) orig.addAll(fakes);
                                     } else {
                                         p.setResult(null);
                                     }
                                 } else {
-                                    // 模拟关闭：放行并记录（采集目标位置基站指纹用）
+                                    // 模拟关闭：放行并记录（含反射直读的完整指纹）
                                     for (Object a : p.args) {
-                                        if (a != null) dlog("CELL(cb) " + a);
+                                        if (a != null) {
+                                            dlog("CELL(cb) " + a);
+                                            if (a instanceof List) {
+                                                for (Object ci : (List<?>) a) dlogCellDetail(ci);
+                                            } else {
+                                                dlogCellDetail(a);
+                                            }
+                                        }
                                     }
                                 }
                             }

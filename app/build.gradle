@@ -17,8 +17,8 @@ android {
         // 保持 targetSdk 34：Android 17 仍完全兼容，且避免 targetSdk 35+ 的
         // 强制沉浸式(edge-to-edge)等行为变化影响现有 UI。
         targetSdk 34
-        versionCode 20
-        versionName "2.2.3"
+        versionCode 21
+        versionName "2.2.4"
 
         // 只打包 arm64，减小体积
         ndk {
