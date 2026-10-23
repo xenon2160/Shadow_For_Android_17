@@ -1078,7 +1078,8 @@ public class HookMain implements IXposedHookLoadPackage {
                                     // 模拟开启：替换为教学楼基站指纹（无指纹则清空）
                                     if (mn.equals("onCellInfoUpdated") && p.args.length > 0 && p.args[0] instanceof List) {
                                         List<Object> fakes = loadFakeCells();
-                                        List<?> orig = (List<?>) p.args[0];
+                                        @SuppressWarnings("unchecked")
+                                        List<Object> orig = (List<Object>) p.args[0];
                                         orig.clear();
                                         if (fakes != null) orig.addAll(fakes);
                                     } else {
