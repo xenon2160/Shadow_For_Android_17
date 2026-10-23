@@ -309,12 +309,18 @@ public class HookMain implements IXposedHookLoadPackage {
                         new XC_MethodHook() {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                                if (diagCtx != null) dlog("Telephony.getAllCellInfo called");
+                                if (readFromTmp() != null) {
+                                    // 模拟开启：基站列表清空（后续可替换为教学楼指纹回放）
+                                    param.setResult(new ArrayList<CellInfo>());
+                                } else {
+                                    // 模拟关闭：放行真实数据并记录（采集目标位置基站指纹用）
+                                    Object r = param.getResult();
+                                    if (r instanceof List) {
+                                        for (Object ci : (List<?>) r) dlog("CELL " + ci);
+                                    }
+                                }
                             }
                         }));
-        safe("TelephonyManager.getAllCellInfo(fake)", () ->
-                XposedHelpers.findAndHookMethod(TelephonyManager.class, "getAllCellInfo",
-                        XC_MethodReplacement.returnConstant(new ArrayList<CellInfo>())));
         safe("TelephonyManager.getCellLocation", () ->
                 XposedHelpers.findAndHookMethod(TelephonyManager.class, "getCellLocation",
                         XC_MethodReplacement.returnConstant(null)));
@@ -951,17 +957,34 @@ public class HookMain implements IXposedHookLoadPackage {
         return sb.toString();
     }
 
-    /** 掐掉 TelephonyCallback 中泄露位置的回调（基站列表/基站位置/服务状态），静默丢弃 */
+    /** 掐掉 TelephonyCallback 中泄露位置的回调；模拟关闭时放行真实数据并记录（采集基站指纹） */
     private void hookTelephonyCallbackOnce(Object cb) {
         try {
             Class<?> c = cb.getClass();
             if (!hookedTelCallbacks.add(c)) return;
             boolean any = false;
-            for (String mn : new String[]{"onCellInfoUpdated", "onCellLocationChanged", "onServiceStateUpdated"}) {
+            for (final String mn : new String[]{"onCellInfoUpdated", "onCellLocationChanged", "onServiceStateUpdated"}) {
                 for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
                     if (m.getName().equals(mn)) {
-                        XposedBridge.hookAllMethods(c, mn, XC_MethodReplacement.doNothing());
-                        dlog("tel callback neutered: " + c.getName() + "." + mn);
+                        XposedBridge.hookAllMethods(c, mn, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                if (readFromTmp() != null) {
+                                    // 模拟开启：吞掉真实基站推送（后续可替换为教学楼指纹回放）
+                                    if (mn.equals("onCellInfoUpdated") && p.args.length > 0 && p.args[0] instanceof List) {
+                                        ((List<?>) p.args[0]).clear();
+                                    } else {
+                                        p.setResult(null);
+                                    }
+                                } else {
+                                    // 模拟关闭：放行并记录（采集目标位置基站指纹用）
+                                    for (Object a : p.args) {
+                                        if (a != null) dlog("CELL(cb) " + a);
+                                    }
+                                }
+                            }
+                        });
+                        dlog("tel callback hooked: " + c.getName() + "." + mn);
                         any = true;
                         break;
                     }
