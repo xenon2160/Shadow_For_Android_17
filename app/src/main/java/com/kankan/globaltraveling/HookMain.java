@@ -397,6 +397,22 @@ public class HookMain implements IXposedHookLoadPackage {
                 for (java.lang.reflect.Method m : LocationManager.class.getDeclaredMethods()) {
                     final String mn = m.getName();
                     if (!mn.contains("Location") && !mn.contains("Gnss") && !mn.contains("location")) continue;
+                    // GNSS 原始数据通道（测量值/卫星状态/NMEA）：模拟期间切断注册
+                    // （原始卫星观测值会被打卡类应用提交给服务端解算真实位置，无法伪造，只能断供）
+                    if (mn.startsWith("registerGnss") || mn.contains("Nmea")) {
+                        XposedBridge.hookAllMethods(LocationManager.class, mn, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                if (readFromTmp() != null) {
+                                    dlog("BLOCK " + mn + " -> false | " + shortStack());
+                                    p.setResult(false);
+                                } else {
+                                    dlog(mn + " allowed (sim off)");
+                                }
+                            }
+                        });
+                        continue;
+                    }
                     XposedBridge.hookAllMethods(LocationManager.class, mn, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam p) throws Throwable {
@@ -854,6 +870,21 @@ public class HookMain implements IXposedHookLoadPackage {
         for (Object a : args) {
             if (sb.length() > 0) sb.append(",");
             sb.append(a == null ? "null" : a.getClass().getSimpleName());
+        }
+        return sb.toString();
+    }
+
+    /** 精简调用栈（诊断日志用）：只留应用/SDK 帧，最多 6 层，识别采集方是谁 */
+    private String shortStack() {
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (StackTraceElement el : Thread.currentThread().getStackTrace()) {
+            String s = el.toString();
+            if (s.contains("android.") || s.contains("java.") || s.contains("de.robv")
+                    || s.contains("HookMain") || s.contains("com.android.internal")) continue;
+            if (sb.length() > 0) sb.append(" <- ");
+            sb.append(s);
+            if (++n >= 6) break;
         }
         return sb.toString();
     }
