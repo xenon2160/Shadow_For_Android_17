@@ -256,6 +256,7 @@ public class HookMain implements IXposedHookLoadPackage {
                 XposedHelpers.findAndHookMethod(WifiManager.class, "getConnectionInfo", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (diagCtx != null) dlog("Wifi.getConnectionInfo called");
                         if (readFromTmp() == null) return;
                         WifiInfo info = (WifiInfo) param.getResult();
                         if (info == null) return;
@@ -271,6 +272,7 @@ public class HookMain implements IXposedHookLoadPackage {
                 XposedHelpers.findAndHookMethod(WifiManager.class, "getScanResults", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (diagCtx != null) dlog("Wifi.getScanResults called -> " + (param.getResult() == null ? "null" : ((List<?>) param.getResult()).size() + " APs"));
                         if (readFromTmp() != null) {
                             List<ScanResult> list = new ArrayList<>();
                             try {
@@ -300,6 +302,14 @@ public class HookMain implements IXposedHookLoadPackage {
                 XposedHelpers.findAndHookMethod(TelephonyManager.class, "getSimState", int.class,
                         XC_MethodReplacement.returnConstant(TelephonyManager.SIM_STATE_ABSENT)));
         safe("TelephonyManager.getAllCellInfo", () ->
+                XposedHelpers.findAndHookMethod(TelephonyManager.class, "getAllCellInfo",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                                if (diagCtx != null) dlog("Telephony.getAllCellInfo called");
+                            }
+                        }));
+        safe("TelephonyManager.getAllCellInfo(fake)", () ->
                 XposedHelpers.findAndHookMethod(TelephonyManager.class, "getAllCellInfo",
                         XC_MethodReplacement.returnConstant(new ArrayList<CellInfo>())));
         safe("TelephonyManager.getCellLocation", () ->
