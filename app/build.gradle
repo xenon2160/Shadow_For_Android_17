@@ -17,8 +17,8 @@ android {
         // 保持 targetSdk 34：Android 17 仍完全兼容，且避免 targetSdk 35+ 的
         // 强制沉浸式(edge-to-edge)等行为变化影响现有 UI。
         targetSdk 34
-        versionCode 19
-        versionName "2.2.2"
+        versionCode 20
+        versionName "2.2.3"
 
         // 只打包 arm64，减小体积
         ndk {
@@ -52,10 +52,13 @@ android {
         buildConfig = true
     }
 
-    // 解决 16KB 对齐报错
+    // 16KB 内存页适配（澎湃OS 4 等新机型）：
+    // 高德 3dmap 10.0.600 官方已适配 16KB，.so 直接以未压缩+对齐方式存放（AGP 9 自动 16KB 对齐），
+    // 系统兼容性校验通过，不再弹「未按16KB内存页适配」提醒。
+    // （旧的 useLegacyPackaging=true 会让系统无法校验对齐而每次启动弹提示，已移除）
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
         }
     }
 }

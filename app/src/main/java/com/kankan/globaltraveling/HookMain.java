@@ -89,6 +89,9 @@ public class HookMain implements IXposedHookLoadPackage {
     // 已处理过的腾讯 SDK 类，防止重复 Hook
     private final Set<Class<?>> tencentHooked =
             Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+    // 已中和的 TelephonyCallback 回调类
+    private final Set<Class<?>> hookedTelCallbacks =
+            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
     private volatile boolean tencentWatcherInstalled = false;
     // 诊断日志写文件用（澎湃OS 4 封锁 logcat 读取，改走文件通道）
     private static volatile Context diagCtx = null;
@@ -345,6 +348,20 @@ public class HookMain implements IXposedHookLoadPackage {
                             @Override
                             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                                 if (readFromTmp() != null) param.args[1] = PhoneStateListener.LISTEN_NONE;
+                            }
+                        }));
+
+        // Android 12+ 推送式基站回调（PhoneStateListener 的继任者）：旧 listen() 已拦截，
+        // 但新 TelephonyCallback 的 onCellInfoUpdated 会把真实基站+邻区直接推给调用方。
+        // 基站 ID 是城市内 50-200 米精度的位置指纹（腾讯 LBS 可实时反查），必须一并掐断
+        safe("TelephonyManager.registerTelephonyCallback", () ->
+                XposedBridge.hookAllMethods(TelephonyManager.class, "registerTelephonyCallback",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                for (Object arg : p.args) {
+                                    if (arg != null) hookTelephonyCallbackOnce(arg);
+                                }
                             }
                         }));
 
@@ -932,6 +949,28 @@ public class HookMain implements IXposedHookLoadPackage {
             sb.append(a == null ? "null" : a.getClass().getSimpleName());
         }
         return sb.toString();
+    }
+
+    /** 掐掉 TelephonyCallback 中泄露位置的回调（基站列表/基站位置/服务状态），静默丢弃 */
+    private void hookTelephonyCallbackOnce(Object cb) {
+        try {
+            Class<?> c = cb.getClass();
+            if (!hookedTelCallbacks.add(c)) return;
+            boolean any = false;
+            for (String mn : new String[]{"onCellInfoUpdated", "onCellLocationChanged", "onServiceStateUpdated"}) {
+                for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                    if (m.getName().equals(mn)) {
+                        XposedBridge.hookAllMethods(c, mn, XC_MethodReplacement.doNothing());
+                        dlog("tel callback neutered: " + c.getName() + "." + mn);
+                        any = true;
+                        break;
+                    }
+                }
+            }
+            if (any) dlog("TelephonyCallback intercepted: " + c.getName() + " | " + shortStack());
+        } catch (Throwable t) {
+            dlog("tel callback hook failed: " + t);
+        }
     }
 
     /** 精简调用栈（诊断日志用）：只留应用/SDK 帧，最多 6 层，识别采集方是谁 */
