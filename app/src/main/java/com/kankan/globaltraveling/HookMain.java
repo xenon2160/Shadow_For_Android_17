@@ -13,6 +13,7 @@ import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
 import android.telephony.CellInfo;
@@ -622,6 +623,45 @@ public class HookMain implements IXposedHookLoadPackage {
         }
     }
 
+    /** 清洗 android Location 对象：坐标（getter 已 Hook）+ 其 extras Bundle 里的原始卫星数据 */
+    private void scrubLocationExtras(Object locObj) {
+        try {
+            Location sl = (Location) locObj;
+            applyLocationFix(sl);
+            scrubBundle(sl.getExtras());
+        } catch (Throwable ignored) {}
+    }
+
+    /** 递归清洗 Bundle：raw_gps 等 Location 值、嵌套 Bundle、lat/lng 原始 double 全部替换为假坐标。
+     *  这是打卡类应用服务端交叉校验的真凶：坐标 getter 被改了，但 Bundle 里的原始 GNSS 值一直是真的 */
+    private void scrubBundle(Bundle b) {
+        if (b == null) return;
+        double[] cfg = readFromTmp();
+        if (cfg == null) return;
+        double lat = cfg[0] + getDrift(), lng = cfg[1] + getDrift();
+        for (String key : new ArrayList<>(b.keySet())) {
+            try {
+                Object v = b.get(key);
+                if (v instanceof Location) {
+                    scrubLocationExtras(v);
+                    dlog("bundle scrub raw Location@" + key);
+                } else if (v instanceof Bundle) {
+                    scrubBundle((Bundle) v);
+                } else if (v instanceof Double) {
+                    String k = key.toLowerCase();
+                    double dv = (Double) v;
+                    if (k.contains("lat") && dv > -90 && dv < 90) {
+                        b.putDouble(key, lat);
+                        dlog("bundle " + key + " -> " + lat);
+                    } else if ((k.contains("lng") || k.contains("lon")) && dv > -180 && dv < 180) {
+                        b.putDouble(key, lng);
+                        dlog("bundle " + key + " -> " + lng);
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
     /** 在对象及其嵌套对象（同 SDK 包内，深度≤2）里按字段名覆写 lat/lon/accuracy */
     private void overwriteInObject(Object obj, double lat, double lng, int depth) {
         if (obj == null || depth > 2) return;
@@ -650,6 +690,12 @@ public class HookMain implements IXposedHookLoadPackage {
                         dlog("set " + k.getSimpleName() + "." + f.getName() + " accuracy");
                     } else if ((ft == int.class || ft == Integer.class) && n.contains("coordinatetype")) {
                         f.set(obj, 1); // GCJ02
+                    } else if (ft == Location.class) {
+                        // android Location 字段（如 ez.n / raw_gps）：连同其 extras 里的原始卫星数据一起洗
+                        scrubLocationExtras(f.get(obj));
+                    } else if (ft == Bundle.class) {
+                        Object v = f.get(obj);
+                        if (v instanceof Bundle) scrubBundle((Bundle) v);
                     } else if (!ft.isPrimitive() && ft != String.class && depth < 2) {
                         // 递归嵌套对象（限制 SDK 包内，防误伤）
                         Object nested = f.get(obj);
