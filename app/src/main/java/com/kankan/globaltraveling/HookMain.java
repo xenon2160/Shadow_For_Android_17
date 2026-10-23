@@ -938,6 +938,13 @@ public class HookMain implements IXposedHookLoadPackage {
         }
         // 旧系统 mock 标记字段（新系统上可能不存在，忽略失败）
         try { XposedHelpers.setBooleanField(loc, "mIsFromMockProvider", false); } catch (Throwable ignored) {}
+        // 关键：清洗 extras 里 GPS 硬件（HAL）写入的原始坐标！
+        // getLatitude() 被 Hook 了，但厂商在 extras 里写的 lat/lng 原始值会被腾讯 SDK
+        // 直读并上传到腾讯 LBS（lbs.map.qq.com），经 locationId 反查暴露真实位置
+        try {
+            Bundle ex = loc.getExtras();
+            if (ex != null) scrubBundle(ex);
+        } catch (Throwable ignored) {}
     }
 
     private double getDrift() { return (new Random().nextDouble() - 0.5) * 0.00002; }
