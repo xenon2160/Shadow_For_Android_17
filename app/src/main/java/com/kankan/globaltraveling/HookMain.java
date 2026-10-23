@@ -445,6 +445,25 @@ public class HookMain implements IXposedHookLoadPackage {
                 });
                 dlog("Network URL diagnostics installed (proc=" + Application.getProcessName() + ")");
             });
+
+            // extras 兜底网：任何 Location 对象的 getExtras 读取/写入都清洗一遍，
+            // 即使对象逃过了 applyLocationFix（如原生层创建），GPS 硬件写的真实坐标也出不去
+            safe("Location.extras catch-all", () -> {
+                XposedHelpers.findAndHookMethod(Location.class, "getExtras", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        Object b = p.getResult();
+                        if (b instanceof Bundle && readFromTmp() != null) scrubBundle((Bundle) b);
+                    }
+                });
+                XposedHelpers.findAndHookMethod(Location.class, "setExtras", Bundle.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        if (p.args[0] instanceof Bundle && readFromTmp() != null) scrubBundle((Bundle) p.args[0]);
+                    }
+                });
+                dlog("Location.extras catch-all installed (proc=" + Application.getProcessName() + ")");
+            });
         }
 
 
@@ -672,7 +691,25 @@ public class HookMain implements IXposedHookLoadPackage {
                         sb.append(f.getName()).append(":").append(f.getType().getSimpleName());
                         try {
                             f.setAccessible(true);
-                            sb.append("=").append(f.get(loc));
+                            Object val = f.get(loc);
+                            if (val instanceof double[]) sb.append("=").append(java.util.Arrays.toString((double[]) val));
+                            else if (val instanceof float[]) sb.append("=").append(java.util.Arrays.toString((float[]) val));
+                            else if (val instanceof int[]) sb.append("=").append(java.util.Arrays.toString((int[]) val));
+                            else if (val instanceof long[]) sb.append("=").append(java.util.Arrays.toString((long[]) val));
+                            else if (val instanceof Object[]) sb.append("=").append(java.util.Arrays.toString((Object[]) val));
+                            else {
+                                sb.append("=").append(val);
+                                // 嵌套对象一层展开（审计盲区：ev 等对象的内部字段）
+                                if (val != null && val != loc && !val.getClass().getName().startsWith("java.")
+                                        && !val.getClass().getName().startsWith("android.")) {
+                                    for (java.lang.reflect.Field f2 : val.getClass().getDeclaredFields()) {
+                                        try {
+                                            f2.setAccessible(true);
+                                            sb.append(" {").append(f2.getName()).append("=").append(f2.get(val)).append("}");
+                                        } catch (Throwable ignored) {}
+                                    }
+                                }
+                            }
                         } catch (Throwable ignored) {}
                         sb.append(", ");
                     }
