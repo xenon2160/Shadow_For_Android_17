@@ -26,3 +26,9 @@ lspd-logs/
 
 # 第三方项目（本地参考用，勿提交）
 HookWXMAppLocation-master/
+
+lspd-check/
+*.jpg
+find_brace.py
+scan_fuzzy.py
+parse_tencent_dex.py
