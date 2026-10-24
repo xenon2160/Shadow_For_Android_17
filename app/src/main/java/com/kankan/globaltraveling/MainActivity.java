@@ -39,7 +39,9 @@ import com.amap.api.maps.AMap;
 import com.amap.api.maps.CameraUpdateFactory;
 import com.amap.api.maps.MapView;
 import com.amap.api.maps.MapsInitializer;
+import com.amap.api.maps.model.BitmapDescriptorFactory;
 import com.amap.api.maps.model.LatLng;
+import com.amap.api.maps.model.Marker;
 import com.amap.api.maps.model.MarkerOptions;
 import com.amap.api.services.core.LatLonPoint;
 import com.amap.api.services.core.ServiceSettings;
@@ -69,6 +71,13 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     private TextView tvStatus;
     private AutoCompleteTextView etSearch;
     private LinearLayout historyContainer;
+
+    // 真实位置/模拟位置双标记（实时对比显示）
+    private android.location.LocationManager realLm;
+    private android.location.LocationListener realLis;
+    private Marker realMarker;
+    private Marker fakeMarker;
+    private static final int RC_LOC = 31;
 
     private static final String FILE_PATH = "/data/local/tmp/irest_loc.conf";
     private static final String PREF_NAME = "IdentityConfig";
@@ -201,6 +210,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         loadDefaultLocation();
 
         aMap.setOnMapLongClickListener(latLng -> updateSelection(latLng.latitude, latLng.longitude, "手动选点"));
+
+        // 真实位置标记（🔵 绿点实时跟随真实 GPS，与模拟位置对比）
+        ensureRealLocationOverlay();
 
         // 搜索逻辑 (带防抖)
         etSearch.setThreshold(1);
@@ -781,13 +793,62 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         return new double[]{lng + dLng, lat + dLat};
     }
 
+    /** 真实位置标记：申请定位权限后，持续用系统 GPS 更新绿点（App 自身不在 Hook 范围，拿到的是真坐标） */
+    private void ensureRealLocationOverlay() {
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, RC_LOC);
+            return;
+        }
+        try {
+            realLm = (android.location.LocationManager) getSystemService(LOCATION_SERVICE);
+            realLis = new android.location.LocationListener() {
+                @Override
+                public void onLocationChanged(android.location.Location loc) {
+                    drawRealMarker(loc);
+                }
+            };
+            realLm.requestLocationUpdates(android.location.LocationManager.GPS_PROVIDER, 5000, 0, realLis);
+        } catch (Throwable ignored) {}
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RC_LOC && grantResults.length > 0
+                && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            ensureRealLocationOverlay();
+        }
+    }
+
+    /** 绘制/更新真实位置绿点 */
+    private void drawRealMarker(android.location.Location loc) {
+        if (aMap == null || isFinishing()) return;
+        final LatLng p = new LatLng(loc.getLatitude(), loc.getLongitude());
+        runOnUiThread(() -> {
+            if (realMarker == null) {
+                realMarker = aMap.addMarker(new MarkerOptions()
+                        .position(p)
+                        .title("真实位置")
+                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN)));
+            } else {
+                realMarker.setPosition(p);
+            }
+        });
+    }
+
     private void updateSelection(double lat, double lng, String title) {
         selectLat = lat;
         selectLng = lng;
         currentName = title;
-        aMap.clear();
-        aMap.addMarker(new MarkerOptions().position(new LatLng(lat, lng)).title(title));
+        // 只换模拟标记，不清屏（保留真实位置绿点）
+        if (fakeMarker != null) { fakeMarker.remove(); fakeMarker = null; }
+        fakeMarker = aMap.addMarker(new MarkerOptions()
+                .position(new LatLng(lat, lng))
+                .title("模拟位置: " + title)
+                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)));
         tvStatus.setText("已选: " + title);
+        tvStatus.setTextColor(Color.parseColor("#333333"));
     }
 
     private void initIdentity() {
@@ -832,8 +893,12 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                 int ret = p.waitFor();
                 runOnUiThread(() -> {
                     if (ret == 0) {
-                        String msg = isStart ? "模拟已启动" : "模拟已结束";
-                        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+                        String msg = isStart ? "🔴 模拟中：" + currentName : "已停止模拟";
+                        Toast.makeText(this, isStart ? "模拟已启动" : "模拟已结束", Toast.LENGTH_SHORT).show();
+                        if (tvStatus != null) {
+                            tvStatus.setText(msg);
+                            tvStatus.setTextColor(Color.parseColor(isStart ? "#D32F2F" : "#999999"));
+                        }
                     } else {
                         Toast.makeText(this, "Root授权失败", Toast.LENGTH_SHORT).show();
                     }
@@ -847,7 +912,11 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         return (int) (dp * scale + 0.5f);
     }
 
-    @Override protected void onDestroy() { super.onDestroy(); if(mapView!=null) mapView.onDestroy(); }
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        try { if (realLm != null && realLis != null) realLm.removeUpdates(realLis); } catch (Throwable ignored) {}
+        if (mapView != null) mapView.onDestroy();
+    }
     @Override protected void onResume() { super.onResume(); if(mapView!=null) mapView.onResume(); }
     @Override protected void onPause() { super.onPause(); if(mapView!=null) mapView.onPause(); }
     @Override protected void onSaveInstanceState(Bundle outState) { super.onSaveInstanceState(outState); if(mapView!=null) mapView.onSaveInstanceState(outState); }
