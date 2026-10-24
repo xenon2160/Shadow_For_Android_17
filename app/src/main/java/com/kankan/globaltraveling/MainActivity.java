@@ -824,7 +824,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     /** 绘制/更新真实位置绿点 */
     private void drawRealMarker(android.location.Location loc) {
         if (aMap == null || isFinishing()) return;
-        final LatLng p = new LatLng(loc.getLatitude(), loc.getLongitude());
+        // 系统 GPS 输出 WGS-84，而高德地图底图是 GCJ-02——不转换会有几百米显示偏差
+        double[] gcj = wgs84ToGcj02(loc.getLongitude(), loc.getLatitude());
+        final LatLng p = new LatLng(gcj[1], gcj[0]);
         runOnUiThread(() -> {
             if (realMarker == null) {
                 realMarker = aMap.addMarker(new MarkerOptions()
