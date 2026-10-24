@@ -12,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.Gravity;
@@ -248,6 +249,12 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
             saveHistory(currentName, selectLat, selectLng);
         });
 
+        // 长按「开始模拟」→ 手动输入精确坐标（绕过地图选点误差，米级精度）
+        findViewById(R.id.btn_start).setOnLongClickListener(v -> {
+            showManualCoordDialog();
+            return true;
+        });
+
         findViewById(R.id.btn_stop).setOnClickListener(v -> writeToSystemTmp("0,0,0,0,0", false));
 
         findViewById(R.id.btn_set_default).setOnClickListener(v -> {
@@ -363,6 +370,51 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
             cm.setPrimaryClip(ClipData.newPlainText(label, text));
             Toast.makeText(this, "已复制 " + label, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /** 手动输入精确坐标弹窗（长按开始模拟触发）：绕过地图选点误差，米级精度直接模拟 */
+    private void showManualCoordDialog() {
+        final EditText etLat = new EditText(this);
+        etLat.setSingleLine(true);
+        etLat.setHint("纬度，如 23.038511");
+        etLat.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        etLat.setText(selectLat != 0 ? String.valueOf(selectLat) : "");
+        final EditText etLng = new EditText(this);
+        etLng.setSingleLine(true);
+        etLng.setHint("经度，如 113.398639");
+        etLng.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        etLng.setText(selectLng != 0 ? String.valueOf(selectLng) : "");
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp2px(24), dp2px(8), dp2px(24), 0);
+        TextView tip = new TextView(this);
+        tip.setText("输入目标点的精确坐标（GCJ-02 火星坐标，可从地图 App 搜地点后复制坐标）。\n"
+                + "当前已填：" + (selectLat != 0 ? selectLat + ", " + selectLng : "无"));
+        tip.setTextSize(12);
+        tip.setTextColor(Color.parseColor("#666666"));
+        box.addView(tip);
+        box.addView(etLat);
+        box.addView(etLng);
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("手动输入坐标")
+                .setView(box)
+                .setCancelable(true)
+                .setPositiveButton("模拟此点", (dialog, which) -> {
+                    try {
+                        double lat = Double.parseDouble(etLat.getText().toString().trim());
+                        double lng = Double.parseDouble(etLng.getText().toString().trim());
+                        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) throw new IllegalArgumentException();
+                        updateSelection(lat, lng, "手动输入");
+                        writeToSystemTmp(lat + "," + lng + ",1," + fixedMac + "," + fixedSSID, true);
+                        Toast.makeText(this, "已按精确坐标开始模拟", Toast.LENGTH_SHORT).show();
+                    } catch (Exception e) {
+                        Toast.makeText(this, "坐标格式错误", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     /** 获取当前安装包签名的 SHA1（高德 Key 绑定 包名+SHA1） */

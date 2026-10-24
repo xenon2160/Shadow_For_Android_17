@@ -6,6 +6,8 @@ TARGETS = (
     "Lcom/tencent/map/geolocation/sapp/TencentLocationManager;",
     "Lcom/tencent/map/geolocation/sapp/TencentLocationListener;",
 )
+# 附加任务：类名含 Fuzzy 的类（wx.getFuzzyLocation 相关）
+FUZZY_MATCH = "Fuzzy"
 
 def uleb(data, off):
     result = shift = 0
@@ -62,6 +64,10 @@ def parse_dex(data):
         # 额外任务：找出继承 TencentLocation 的子类
         if superclass == "Lcom/tencent/map/geolocation/sapp/TencentLocation;":
             print(f"\n##### SUBCLASS: {cname} (super=TencentLocation) #####")
+            dump_class(data, base, cname, get_type, get_field, get_method, uleb)
+            continue
+        if FUZZY_MATCH in cname:
+            print(f"\n##### FUZZY: {cname} (super={superclass}) #####")
             dump_class(data, base, cname, get_type, get_field, get_method, uleb)
             continue
         if cname not in TARGETS: continue
