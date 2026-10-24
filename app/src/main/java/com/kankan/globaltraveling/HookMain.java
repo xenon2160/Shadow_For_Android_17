@@ -279,6 +279,10 @@ public class HookMain implements IXposedHookLoadPackage {
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         if (diagCtx != null) dlog("Wifi.getScanResults called -> " + (param.getResult() == null ? "null" : ((List<?>) param.getResult()).size() + " APs"));
                         if (readFromTmp() != null) {
+                            // 优先回放目标位置的真实 WiFi 指纹（irest_wifi.conf）；
+                            // 无配置时退回单假 AP（单假 AP 是"物理不可能事件"，会被融合校验判毒）
+                            List<ScanResult> replay = loadFakeWifi();
+                            if (replay != null) { param.setResult(replay); return; }
                             List<ScanResult> list = new ArrayList<>();
                             try {
                                 Constructor<ScanResult> ctor = ScanResult.class.getDeclaredConstructor();
@@ -293,6 +297,12 @@ public class HookMain implements IXposedHookLoadPackage {
                                 list.add(w);
                             } catch (Exception ignored) {}
                             param.setResult(list);
+                        } else {
+                            // 模拟关闭：放行真实扫描并记录完整 AP 指纹（采集目标位置 WiFi 用）
+                            Object r = param.getResult();
+                            if (r instanceof List) {
+                                for (Object ap : (List<?>) r) dlog("WIFIX " + ap);
+                            }
                         }
                     }
                 }));
@@ -1058,6 +1068,52 @@ public class HookMain implements IXposedHookLoadPackage {
             return fakeCellsCache;
         } catch (Throwable t) {
             dlog("loadFakeCells fail: " + t);
+            return null;
+        }
+    }
+
+    /** WiFi 指纹回放缓存 */
+    private static volatile List<ScanResult> fakeWifiCache = null;
+    private static volatile long fakeWifiCacheTime = 0;
+
+    /** 从 /data/local/tmp/irest_wifi.conf 加载目标位置真实 WiFi 指纹
+     *  格式：每行 bssid,ssid,level,freq[,capabilities] */
+    private List<ScanResult> loadFakeWifi() {
+        try {
+            long now = System.currentTimeMillis();
+            if (fakeWifiCache != null && now - fakeWifiCacheTime < 30000) return fakeWifiCache;
+            fakeWifiCacheTime = now;
+            File file = new File("/data/local/tmp/irest_wifi.conf");
+            if (!file.exists() || !file.canRead()) { fakeWifiCache = null; return null; }
+            List<ScanResult> result = new ArrayList<>();
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String[] p = line.split(",", 5);
+                if (p.length < 4) continue;
+                try {
+                    Constructor<ScanResult> ctor = ScanResult.class.getDeclaredConstructor();
+                    ctor.setAccessible(true);
+                    ScanResult w = ctor.newInstance();
+                    w.BSSID = p[0].trim();
+                    w.SSID = p[1].trim();
+                    w.level = Integer.parseInt(p[2].trim());
+                    w.frequency = Integer.parseInt(p[3].trim());
+                    w.capabilities = p.length > 4 && !p[4].trim().isEmpty() ? p[4].trim() : "[WPA2-PSK-CCMP][ESS]";
+                    w.timestamp = SystemClock.elapsedRealtime() * 1000;
+                    result.add(w);
+                } catch (Throwable t) {
+                    dlog("fake wifi construct fail: " + t);
+                }
+            }
+            reader.close();
+            fakeWifiCache = result.isEmpty() ? null : result;
+            if (fakeWifiCache != null) dlog("fake wifi loaded: " + result.size() + " APs");
+            return fakeWifiCache;
+        } catch (Throwable t) {
+            dlog("loadFakeWifi fail: " + t);
             return null;
         }
     }
