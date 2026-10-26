@@ -64,6 +64,12 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  *    + 类级别 Hook SDK 坐标出口（getLatitude/getLongitude）重定向到系统模拟坐标，
  *    不依赖 SDK 内部字段名/方法签名，SDK 更新后依然稳定（取代第三方
  *    HookWXMAppLocation 模块的脆弱内部链路 Hook）。
+ * 7. 坐标系语义分层（v2.3.0 核心修复）：配置文件（/data/local/tmp/irest_loc.conf）
+ *    恒为 GCJ-02（火星坐标，与高德取点一致）；各出口按该层语义换算后下发——
+ *    android Location / 原始 GNSS = WGS-84，高德 = GCJ-02，腾讯 = 按消费方
+ *    setCoordinateType 请求值。之前把 GCJ-02 原值发进 WGS-84 语义槽位，被下游
+ *    二次换算产生 ~344 米偏差（广州），打卡被判"距离过远"。getCoordinateType
+ *    如实上报请求值（之前谎报 GCJ-02）。
  */
 public class HookMain implements IXposedHookLoadPackage {
 
@@ -98,6 +104,15 @@ public class HookMain implements IXposedHookLoadPackage {
     // 诊断日志写文件用（澎湃OS 4 封锁 logcat 读取，改走文件通道）
     private static volatile Context diagCtx = null;
     private static volatile long lastGetterLogTime = 0;
+
+    // ===== 坐标系语义（v2.3.0 核心修复）=====
+    // 配置文件 irest_loc.conf 存的是 GCJ-02（高德口径），但消费方请求的坐标系不一定是 GCJ-02：
+    // 微信小程序 wx.getLocation 默认 type='wgs84'，会 setCoordinateType(0) 向腾讯 SDK 要 WGS-84，
+    // 服务端再按 WGS-84 语义换算 GCJ-02 与课程点比对。此前把 GCJ-02 数值直接塞进 WGS-02 出口，
+    // 被二次换算偏移 ~344 米 → "距离过远"（真 GPS 是 WGS-84，语义自洽所以真定位能过）。
+    // 修复：按消费方请求的坐标系下发注入值（WGS-84 出口做 GCJ-02→WGS-84 逆变换），
+    // 坐标系类型如实上报请求值，不再谎报/强改。
+    private static volatile int requestedCoordType = 0; // 0=WGS-84（wx 默认），1=GCJ-02
 
     /** 诊断日志：写入宿主 App 外部存储 shadowtp.log（adb 可直读） + logcat（万一能用） */
     private static void dlog(String msg) {
@@ -147,11 +162,27 @@ public class HookMain implements IXposedHookLoadPackage {
                 double[] c = readFromTmp();
                 if (c == null) return;
 
+                // ===== 语义分层下发（v2.3.0 核心）=====
+                // 不同 SDK 出口的坐标系语义不同，必须分别对齐真 GPS 在该层的表示。
+                // 按实例类分流（AMapLocation 继承自 Location，按声明类会误判）：
+                // - 高德 AMapLocation：恒 GCJ-02（火星）→ 发配置原值
+                // - 腾讯 TencentLocation（含 obf 子类）：按消费方请求的坐标系 → outLat/outLng
+                // - android.location.Location（含原始 GNSS）：恒 WGS-84 → 发逆变换值
+                String cls = param.thisObject != null ? param.thisObject.getClass().getName() : "";
+                double oLat, oLng;
+                if (cls.startsWith("com.amap")) {
+                    oLat = c[0]; oLng = c[1];
+                } else if (cls.startsWith("com.tencent") || cls.startsWith("c.t.m.")) {
+                    oLat = outLat(c); oLng = outLng(c);
+                } else {
+                    double[] w = gcj02ToWgs84(c[0], c[1]);
+                    oLat = w[0]; oLng = w[1];
+                }
                 double d = getDrift();
                 String name = param.method.getName();
 
-                if (name.equals("getLatitude")) param.setResult(c[0] + d);
-                else if (name.equals("getLongitude")) param.setResult(c[1] + d);
+                if (name.equals("getLatitude")) param.setResult(oLat + d);
+                else if (name.equals("getLongitude")) param.setResult(oLng + d);
                 else if (name.equals("getAccuracy")) param.setResult(3.0f + new Random().nextFloat());
                 else if (name.equals("getSpeed")) param.setResult(0.0f); // 强制静止
                 else if (name.equals("getAltitude")) param.setResult(50.0d);
@@ -633,6 +664,20 @@ public class HookMain implements IXposedHookLoadPackage {
                 dlog("fuzzy class caught: " + name);
                 patchTencentLocation(clazz); // 有 getLatitude 就 Hook，没有则 hookAllMethods 空转
             }
+            // 通用坐标系协商记录兜底：任何带 setCoordinateType 的腾讯类
+            // （管理器、请求对象 TencentLocationRequest 及其混淆变体）都记录请求值。
+            // hookAllMethods 对没有该方法的类返回空集，不会报错
+            safe("coordType record@" + simple, () ->
+                    XposedBridge.hookAllMethods(clazz, "setCoordinateType", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                            if (p.args.length > 0 && p.args[0] instanceof Integer) {
+                                requestedCoordType = (Integer) p.args[0];
+                                dlog("setCoordinateType(" + clazz.getSimpleName() + ") requested="
+                                        + requestedCoordType + " -> recorded");
+                            }
+                        }
+                    }));
         } catch (Throwable t) {
             dlog("watchTencentClass failed: " + t);
         }
@@ -647,8 +692,10 @@ public class HookMain implements IXposedHookLoadPackage {
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                         double[] c = readFromTmp();
                         if (c != null) {
-                            p.setResult(c[0] + getDrift());
-                            dlog("getLatitude -> " + p.getResult());
+                            // 按消费方请求的坐标系下发（v2.3.0）：请求 WGS-84 就发逆变换值，
+                            // 与 getCoordinateType() 的如实上报保持同一语义
+                            p.setResult(outLat(c) + getDrift());
+                            dlog("getLatitude -> " + p.getResult() + " (type=" + requestedCoordType + ")");
                         }
                     }
                 }));
@@ -658,8 +705,8 @@ public class HookMain implements IXposedHookLoadPackage {
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
                         double[] c = readFromTmp();
                         if (c != null) {
-                            p.setResult(c[1] + getDrift());
-                            dlog("getLongitude -> " + p.getResult());
+                            p.setResult(outLng(c) + getDrift());
+                            dlog("getLongitude -> " + p.getResult() + " (type=" + requestedCoordType + ")");
                         }
                     }
                 }));
@@ -678,13 +725,14 @@ public class HookMain implements IXposedHookLoadPackage {
                         if (readFromTmp() != null) p.setResult(5.0f + new Random().nextFloat() * 10);
                     }
                 }));
-        // 坐标系类型固定为 GCJ-02（注入的坐标来自高德地图即火星坐标；
-        // 若对象谎报 WGS84，小程序侧换算会引入 ~500 米系统性偏差 → "距离过远"）
+        // 坐标系类型如实上报（v2.3.0）：消费方请求什么就报什么，且下发值与之匹配。
+        // 之前谎报 GCJ-02 + 发火星坐标，与小程序侧 wx.getLocation(type=wgs84) 的预期冲突，
+        // 导致二次换算偏移 ~344 米 → "距离课程地点过远"
         safe("TencentLocation.getCoordinateType", () ->
                 XposedBridge.hookAllMethods(clazz, "getCoordinateType", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        if (readFromTmp() != null) p.setResult(1); // COORDINATE_TYPE_GCJ02
+                        if (readFromTmp() != null) p.setResult(requestedCoordType);
                     }
                 }));
         // 字段级覆写：对象刚构造出来就把 mLatitude/mLongitude 改成假坐标，
@@ -759,8 +807,9 @@ public class HookMain implements IXposedHookLoadPackage {
             }
             if (cfg == null) return;
             // 按字段名启发式覆写（lat / lon / lng），逐字段容错；
-            // 递归一层嵌套对象（ez 包着 TxLocation，经纬度/精度在嵌套体里）
-            double lat = cfg[0] + getDrift(), lng = cfg[1] + getDrift();
+            // 递归一层嵌套对象（ez 包着 TxLocation，经纬度/精度在嵌套体里）。
+            // 字段语义 = 消费方读取该对象时的坐标系（与 getter 同语义）→ 用 outLat/outLng
+            double lat = outLat(cfg) + getDrift(), lng = outLng(cfg) + getDrift();
             overwriteInObject(loc, lat, lng, 0);
         } catch (Throwable t) {
             dlog("dump/overwrite fail: " + t);
@@ -777,12 +826,14 @@ public class HookMain implements IXposedHookLoadPackage {
     }
 
     /** 递归清洗 Bundle：raw_gps 等 Location 值、嵌套 Bundle、lat/lng 原始 double 全部替换为假坐标。
-     *  这是打卡类应用服务端交叉校验的真凶：坐标 getter 被改了，但 Bundle 里的原始 GNSS 值一直是真的 */
+     *  这是打卡类应用服务端交叉校验的真凶：坐标 getter 被改了，但 Bundle 里的原始 GNSS 值一直是真的。
+     *  原始 GNSS 语义恒为 WGS-84（与 Location.extras 里的 HAL 原始数据同层）→ 发逆变换值 */
     private void scrubBundle(Bundle b) {
         if (b == null) return;
         double[] cfg = readFromTmp();
         if (cfg == null) return;
-        double lat = cfg[0] + getDrift(), lng = cfg[1] + getDrift();
+        double[] w = gcj02ToWgs84(cfg[0], cfg[1]);
+        double lat = w[0] + getDrift(), lng = w[1] + getDrift();
         for (String key : new ArrayList<>(b.keySet())) {
             try {
                 Object v = b.get(key);
@@ -841,7 +892,9 @@ public class HookMain implements IXposedHookLoadPackage {
                         f.set(obj, 5.0f + new Random().nextFloat() * 10);
                         dlog("set " + k.getSimpleName() + "." + f.getName() + " accuracy");
                     } else if ((ft == int.class || ft == Integer.class) && n.contains("coordinatetype")) {
-                        f.set(obj, 1); // GCJ02
+                        // 如实写入消费方请求的坐标系（与 getter/字段值语义一致）
+                        f.set(obj, requestedCoordType);
+                        dlog("set " + k.getSimpleName() + ".coordinatetype=" + requestedCoordType);
                     } else if (ft == Location.class) {
                         // android Location 字段（如 ez.n / raw_gps）：连同其 extras 里的原始卫星数据一起洗
                         scrubLocationExtras(f.get(obj));
@@ -903,23 +956,13 @@ public class HookMain implements IXposedHookLoadPackage {
                 });
             }
         });
-        // 坐标系管道锁定：无论微信请求什么模式，SDK 输出一律按 GCJ-02 对待，
-        // 防止 WGS-84 模式下注入的火星坐标被二次换算（~500 米偏差）
-        safe("TencentLocationManager.setCoordinateType", () ->
-                XposedBridge.hookAllMethods(clazz, "setCoordinateType", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                        if (readFromTmp() != null && p.args.length > 0 && p.args[0] instanceof Integer) {
-                            dlog("setCoordinateType requested=" + p.args[0] + " -> force GCJ02(1)");
-                            p.args[0] = 1;
-                        }
-                    }
-                }));
+        // 坐标系协商记录（v2.3.0）：由 watchTencentClass 的通用兜底 hook 统一记录
+        // setCoordinateType 请求值（管理器/请求对象/混淆变体全覆盖），此处只做汇报
         safe("TencentLocationManager.getCoordinateType", () ->
                 XposedBridge.hookAllMethods(clazz, "getCoordinateType", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        if (readFromTmp() != null) p.setResult(1);
+                        if (readFromTmp() != null) p.setResult(requestedCoordType);
                     }
                 }));
         XposedBridge.log(TAG + "TencentLocationManager hooked: " + clazz.getName());
@@ -1188,15 +1231,18 @@ public class HookMain implements IXposedHookLoadPackage {
         double[] c = readFromTmp();
         if (c == null) return;
 
+        // 系统 Location 语义恒为 WGS-84（v2.3.0）：下发 GCJ-02 配置的逆变换值，
+        // 与 getterHook 同语义——让假定位在系统层与真 GPS 不可区分
+        double[] w = gcj02ToWgs84(c[0], c[1]);
         double d = getDrift();
         // 优先公开 API（各 Android 版本稳定），失败再回退私有字段
         try {
-            loc.setLatitude(c[0] + d);
-            loc.setLongitude(c[1] + d);
+            loc.setLatitude(w[0] + d);
+            loc.setLongitude(w[1] + d);
         } catch (Throwable t) {
             try {
-                XposedHelpers.setDoubleField(loc, "mLatitude", c[0] + d);
-                XposedHelpers.setDoubleField(loc, "mLongitude", c[1] + d);
+                XposedHelpers.setDoubleField(loc, "mLatitude", w[0] + d);
+                XposedHelpers.setDoubleField(loc, "mLongitude", w[1] + d);
             } catch (Throwable ignored) {}
         }
         try { loc.setAccuracy(3.0f + new Random().nextFloat()); } catch (Throwable ignored) {}
@@ -1219,6 +1265,59 @@ public class HookMain implements IXposedHookLoadPackage {
     }
 
     private double getDrift() { return (new Random().nextDouble() - 0.5) * 0.00002; }
+
+    // ==================== 坐标系转换（配置恒为 GCJ-02，出口按语义换算） ====================
+
+    /** GCJ-02 → WGS-84 逆变换（迭代逼近，3 次收敛到 ~1e-7 度 ≈ 厘米级） */
+    private static double[] gcj02ToWgs84(double lat, double lng) {
+        double wLat = lat, wLng = lng;
+        for (int i = 0; i < 3; i++) {
+            double[] g = wgs84ToGcj02(wLat, wLng);
+            wLat += lat - g[0];
+            wLng += lng - g[1];
+        }
+        return new double[]{wLat, wLng};
+    }
+
+    /** WGS-84 → GCJ-02 标准变换（国测局算法） */
+    private static double[] wgs84ToGcj02(double lat, double lng) {
+        double a = 6378245.0, ee = 0.00669342162296594323;
+        double dLat = tfy(lng - 105.0, lat - 35.0);
+        double dLng = tfx(lng - 105.0, lat - 35.0);
+        double radLat = lat / 180.0 * Math.PI;
+        double magic = Math.sin(radLat);
+        magic = 1 - ee * magic * magic;
+        double sqrtMagic = Math.sqrt(magic);
+        dLat = dLat * 180.0 / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
+        dLng = dLng * 180.0 / (a / sqrtMagic * Math.cos(radLat) * Math.PI);
+        return new double[]{lat + dLat, lng + dLng};
+    }
+
+    private static double tfy(double x, double y) {
+        double r = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+        r += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+        r += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+        r += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+        return r;
+    }
+
+    private static double tfx(double x, double y) {
+        double r = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+        r += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+        r += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+        r += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+        return r;
+    }
+
+    /** 按消费方请求的坐标系下发纬度：请求 GCJ-02 发原值，请求 WGS-84 发逆变换值 */
+    private static double outLat(double[] cfg) {
+        return requestedCoordType == 1 ? cfg[0] : gcj02ToWgs84(cfg[0], cfg[1])[0];
+    }
+
+    /** 按消费方请求的坐标系下发经度 */
+    private static double outLng(double[] cfg) {
+        return requestedCoordType == 1 ? cfg[1] : gcj02ToWgs84(cfg[0], cfg[1])[1];
+    }
 
     private double[] readFromTmp() {
         // 500ms 内复用上次结果，降低文件 IO 频率

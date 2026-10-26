@@ -389,11 +389,15 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         final EditText etLat = new EditText(this);
         etLat.setSingleLine(true);
         etLat.setHint("纬度，如 xx.xxxxxx");
+        etLat.setTextColor(Color.parseColor("#1C1B1F"));
+        etLat.setHintTextColor(Color.parseColor("#999999"));
         etLat.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
         etLat.setText(selectLat != 0 ? String.valueOf(selectLat) : "");
         final EditText etLng = new EditText(this);
         etLng.setSingleLine(true);
         etLng.setHint("经度，如 xx.xxxxxx");
+        etLng.setTextColor(Color.parseColor("#1C1B1F"));
+        etLng.setHintTextColor(Color.parseColor("#999999"));
         etLng.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
         etLng.setText(selectLng != 0 ? String.valueOf(selectLng) : "");
 
@@ -409,7 +413,8 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
         box.addView(etLat);
         box.addView(etLng);
 
-        new MaterialAlertDialogBuilder(this)
+        // 白色 Material 3 弹窗（与 Key 弹窗一致，深色模式下也固定白底）
+        AlertDialog coordDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle("手动输入坐标")
                 .setView(box)
                 .setCancelable(true)
@@ -426,7 +431,9 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
                     }
                 })
                 .setNegativeButton("取消", null)
-                .show();
+                .create();
+        coordDialog.show();
+        forceDialogWhite(coordDialog);
     }
 
     /** 获取当前安装包签名的 SHA1（高德 Key 绑定 包名+SHA1） */
