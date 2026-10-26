@@ -388,14 +388,14 @@ public class MainActivity extends AppCompatActivity implements Inputtips.Inputti
     private void showManualCoordDialog() {
         final EditText etLat = new EditText(this);
         etLat.setSingleLine(true);
-        etLat.setHint("纬度，如 xx.xxxxxx");
+        etLat.setHint("纬度，如 39.908823");
         etLat.setTextColor(Color.parseColor("#1C1B1F"));
         etLat.setHintTextColor(Color.parseColor("#999999"));
         etLat.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
         etLat.setText(selectLat != 0 ? String.valueOf(selectLat) : "");
         final EditText etLng = new EditText(this);
         etLng.setSingleLine(true);
-        etLng.setHint("经度，如 xx.xxxxxx");
+        etLng.setHint("经度，如 116.397470");
         etLng.setTextColor(Color.parseColor("#1C1B1F"));
         etLng.setHintTextColor(Color.parseColor("#999999"));
         etLng.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_NUMBER_FLAG_SIGNED);
