@@ -6,9 +6,9 @@
 
 > 🍴 本仓库是 [原项目 GlobalTraveling](https://github.com/Qeccentric/GlobalTraveling) 的 Fork，
 > 由 [@xenon2160](https://github.com/xenon2160) 维护。已完成 **Android 17 / 澎湃OS 4** 全面适配，
-> 应用 ID 为 `com.xenon.shadow2`（自 1.1.2 起），当前版本 **2.0**，支持 GitHub Actions 云端构建一键出包。
+> 应用 ID 为 `com.xenon.shadow2`（自 1.1.2 起），当前版本 **2.3.0**，支持 GitHub Actions 云端构建一键出包。
 
-## � 快速开始 (Quick Start)
+## 🚀 快速开始 (Quick Start)
 
 ### 第 1 步：准备环境
 
@@ -60,7 +60,7 @@
 
 ---
 
-## �🔧 本 Fork 相对原版的主要工作
+## 🔧 本 Fork 相对原版的主要工作
 
 > 以下修复与增强使项目在 **Android 17 / 澎湃OS 4** 上真正可用，
 > 并修复了长期失效的搜索与 Key 流程：
@@ -77,6 +77,7 @@
 | **包名变更** | 应用 ID 改为 `com.xenon.shadow2`，降低被目标 App 按包名识别为 Xposed 模块的概率；今后改包名只需改 `build.gradle` 一行 |
 | **UI 现代化** | Key 弹窗重绘为 Material 风格（描边输入框 + 信息卡片）；搜索下拉改为双行卡片条目（定位图标 + 地点名 + 地址副标题）+ 圆角浮层 |
 | **体验修复** | 未选点时点「开始模拟」增加 Toast 提示（原为静默无反应） |
+| **坐标语义分层（2.3.0）** | 修复小程序距离校验"距离过远"：按各 SDK 语义出值——系统 Location/raw GNSS 发 WGS-84（`gcj02ToWgs84` 三迭代逆变换）、高德发 GCJ-02 原值、腾讯按 `setCoordinateType` 请求如实输出；配套 Bundle 递归清洗、非法默认值槽位精确覆写、WiFi/基站指纹采集回放（2.2.x） |
 
 ---
 
@@ -96,7 +97,7 @@
 > [蓝奏云（密码 4onp）](https://wwaon.lanzn.com/iqUY13h9prwj)
 >
 > 本 Fork 的安装包：**Releases 页面**（永久下载，推荐）或 **Actions → Artifacts**（90 天有效）。
-> 发布新版本只需推送 tag：`git tag v1.1.2 && git push origin v1.1.2`，CI 会自动构建并创建 Release。
+> 发布新版本只需推送 tag：`git tag v2.3.0 && git push origin v2.3.0`，CI 会自动构建并创建 Release。
 
 ---
 
@@ -134,6 +135,37 @@
 | **Xiaomi 13** | **Android 17** | 澎湃OS 4 | ✅ 完美运行（KernelSU + ReZygisk + Vector，定位模拟/搜索/微信均已验证） |
 | **OnePlus Ace 3V** | **Android 16**| ColorOS 16 | ✅ 完美运行 |
 | **Xiaomi 11 Pro** | **Android 13** | MIUI 14 | ✅ 完美运行 |
+
+### 🆕 2.3.0 版本：坐标语义分层（修复小程序距离校验"距离过远"）
+
+*   **根因**：坐标系语义错配。配置文件与高德地图使用 **GCJ-02**（火星坐标），而
+    微信小程序 `wx.getLocation(type='wgs84')` 期望 **WGS-84**；旧版直接把 GCJ-02
+    原值塞进 WGS-84 槽位，下游再按 WGS-84 转一次 GCJ-02，产生约 **600m** 系统性
+    偏移，触发小程序距离校验报"距离过远/距离课程地点过远"。
+*   **修复：出口按 SDK 语义分层出值**（配置文件保持 GCJ-02 格式不变，只在出口转换）：
+    *   系统 `Location` / 原始 GNSS（Bundle 内 `raw_gps`）出口 → 恒发 **WGS-84**
+        （`gcj02ToWgs84` 三迭代逆变换，往返误差 0m）；
+    *   高德 SDK（`com.amap`）出口 → 恒发 **GCJ-02** 原值；
+    *   腾讯定位 SDK（`com.tencent.map.geolocation`）出口 → 按目标 App
+        `setCoordinateType` **请求的坐标系如实输出**（默认 WGS-84），
+        `getCoordinateType` 如实上报，不再强制改写。
+*   **附带**：坐标非法默认值槽位（-91/-181）精确覆写、Bundle 递归清洗（`locationId`/
+    高精度标记）、`setCoordinateType` 通用兜底记录（兼容混淆变体）。
+*   实测：小程序定位由"距离过远"失败转为校验通过。
+
+### 🆕 2.2 版本：多源环境指纹与调试能力
+
+*   **2.2.5 Wi-Fi 指纹采集/回放**：新增 WIFIX 采集日志 + `irest_wifi.conf` 回放。
+    应对服务端多源一致性校验——只伪造坐标而 Wi-Fi/基站仍是真实环境会被判不一致，
+    且**单个假 AP 反而会毒化融合结果**，需按采集清单整体回放。
+*   **2.2.6 手动坐标输入**：长按「开始模拟」按钮弹出坐标输入框，直接输入经纬度
+    （GCJ-02），绕开地图选点异常的场景。
+*   **2.2.7 双地图标记 + 状态指示**：地图同时显示真实 GPS（绿色）与模拟位置
+    （青色）双标记，新增模拟状态实时指示器。
+*   **2.2.8 真实位置标记纠偏**：真实 GPS（WGS-84）上图前先转 GCJ-02，
+    消除高德地图上真实标记偏移约 500m 的显示问题。
+
+---
 
 ### 🆕 2.1 版本：微信小程序定位劫持
 
